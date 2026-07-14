@@ -1,0 +1,7 @@
+High Poly Glock-18 (No-Textures)
+Author: locarem
+Source: https://opengameart.org/content/high-poly-glock-18-no-textures
+License: CC0 1.0 Universal (Public Domain Dedication)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+
+The model is used as the first-person 9mm service pistol viewmodel in Breachline.

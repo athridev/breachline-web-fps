@@ -1,0 +1,7 @@
+High-poly AK-47
+Author: Lamoot
+Source: https://opengameart.org/content/high-poly-ak-47
+License: CC0 1.0 Universal (Public Domain Dedication)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+
+The model is used as the first-person AKM viewmodel in Breachline.

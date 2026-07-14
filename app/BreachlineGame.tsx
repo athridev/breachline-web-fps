@@ -143,6 +143,11 @@ type Bot = {
   skill: number;
   carryingBomb: boolean;
   defuseProgress: number;
+  deathTime: number;
+  deathStart: THREE.Vector3;
+  deathStartQuaternion: THREE.Quaternion;
+  deathTargetQuaternion: THREE.Quaternion;
+  deathDrift: THREE.Vector3;
 };
 
 type Obstacle = { x: number; z: number; w: number; d: number; height: number; mesh: THREE.Mesh };
@@ -206,10 +211,10 @@ export function BreachlineGame() {
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.16;
+    renderer.toneMappingExposure = 0.84;
     renderer.domElement.className = "game-canvas";
     renderer.domElement.setAttribute("aria-label", "Breachline first-person game view");
     mount.appendChild(renderer.domElement);
@@ -222,7 +227,7 @@ export function BreachlineGame() {
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x7893a1);
-    scene.fog = new THREE.FogExp2(0x83939a, 0.0095);
+    scene.fog = new THREE.FogExp2(0x83939a, 0.0072);
 
     const camera = new THREE.PerspectiveCamera(settingsRef.current.fov, mount.clientWidth / mount.clientHeight, 0.05, 180);
     camera.rotation.order = "YXZ";
@@ -264,19 +269,19 @@ export function BreachlineGame() {
       environmentMap = texture;
       texture.mapping = THREE.EquirectangularReflectionMapping;
       scene.environment = texture;
-      scene.environmentIntensity = 0.78;
+      scene.environmentIntensity = 0.92;
       scene.background = texture;
       scene.backgroundBlurriness = 0.035;
-      scene.backgroundIntensity = 0.92;
+      scene.backgroundIntensity = 0.52;
       scene.backgroundRotation.set(0, Math.PI * 0.18, 0);
       scene.environmentRotation.set(0, Math.PI * 0.18, 0);
       sky.visible = false;
       sunDisc.visible = false;
     });
 
-    const hemi = new THREE.HemisphereLight(0xd9efff, 0x4b4034, 1.36);
+    const hemi = new THREE.HemisphereLight(0xd9efff, 0x4b4034, 0.88);
     scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffd6a0, 3.55);
+    const sun = new THREE.DirectionalLight(0xffd6a0, 2.18);
     sun.position.set(-22, 34, 16);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -288,7 +293,7 @@ export function BreachlineGame() {
     sun.shadow.normalBias = 0.025;
     scene.add(sun);
 
-    const fill = new THREE.DirectionalLight(0x78a7bd, 0.72);
+    const fill = new THREE.DirectionalLight(0x78a7bd, 0.48);
     fill.position.set(26, 12, -24);
     scene.add(fill);
 
@@ -304,8 +309,8 @@ export function BreachlineGame() {
     };
     const groundTexture = tiledTexture("ground-v2.avif", 11, 11);
     const groundBump = tiledTexture("ground-v2.avif", 11, 11, false);
-    const concreteTexture = tiledTexture("concrete-v2.avif", 2.2, 2.2);
-    const concreteBump = tiledTexture("concrete-v2.avif", 2.2, 2.2, false);
+    const concreteTexture = tiledTexture("concrete-real-v3.webp", 2.6, 2.6);
+    const concreteBump = tiledTexture("concrete-real-v3.webp", 2.6, 2.6, false);
     const metalTexture = tiledTexture("metal-v2.avif", 1.5, 1.25);
     const metalBump = tiledTexture("metal-v2.avif", 1.5, 1.25, false);
 
@@ -499,11 +504,22 @@ export function BreachlineGame() {
     addZone(zoneB, 0x42b8cf);
 
     const gun = new THREE.Group();
-    gun.position.set(0.34, -0.34, -0.58);
+    gun.position.set(0.33, -0.31, -0.56);
     camera.add(gun);
     scene.add(camera);
     let weaponId = "v9";
     const weaponModels = new Map<string, THREE.Group>();
+    const bots: Bot[] = [];
+    const muzzle = new THREE.PointLight(0xffa45d, 0, 4.5, 2);
+    const muzzleFlash = new THREE.Group();
+    const flashMaterial = new THREE.MeshBasicMaterial({ color: 0xffb35c, transparent: true, opacity: 0.92, blending: THREE.AdditiveBlending, depthWrite: false });
+    const flashCone = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.24, 7, 1, true), flashMaterial);
+    flashCone.rotation.x = -Math.PI / 2;
+    flashCone.position.z = -0.12;
+    const flashCore = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: 0xfff0b8, blending: THREE.AdditiveBlending, depthWrite: false }));
+    muzzleFlash.add(flashCone, flashCore);
+    muzzleFlash.visible = false;
+    gun.add(muzzle, muzzleFlash);
     let gunMeshes: THREE.Object3D[] = [];
     const buildGun = (weapon: Weapon) => {
       for (const child of gunMeshes) gun.remove(child);
@@ -512,16 +528,27 @@ export function BreachlineGame() {
       const polymer = new THREE.MeshStandardMaterial({ color: 0x171d1f, roughness: 0.62, metalness: 0.18 });
       const rubber = new THREE.MeshStandardMaterial({ color: 0x101415, roughness: 0.9, metalness: 0.02 });
       const accent = new THREE.MeshStandardMaterial({ color: 0xd45b22, roughness: 0.46, metalness: 0.52 });
-      const glove = new THREE.MeshPhysicalMaterial({ color: 0x181e1e, roughness: 0.78, metalness: 0.04, clearcoat: 0.08, clearcoatRoughness: 0.85 });
-      const sleeve = new THREE.MeshStandardMaterial({ color: 0x303a38, roughness: 0.94, metalness: 0.01 });
+      const glove = new THREE.MeshPhysicalMaterial({ color: 0x242c2d, roughness: 0.72, metalness: 0.03, clearcoat: 0.08, clearcoatRoughness: 0.82 });
+      const glovePad = new THREE.MeshStandardMaterial({ color: 0x111718, roughness: 0.84, metalness: 0.02 });
+      const sleeve = new THREE.MeshStandardMaterial({ color: 0x26302f, roughness: 0.96, metalness: 0.01 });
       const addPart = (mesh: THREE.Mesh) => { mesh.castShadow = true; gun.add(mesh); gunMeshes.push(mesh); return mesh; };
       const addObject = (object: THREE.Object3D) => { gun.add(object); gunMeshes.push(object); return object; };
+      const addLimbBetween = (start: THREE.Vector3, end: THREE.Vector3, radius: number, material: THREE.Material) => {
+        const direction = end.clone().sub(start);
+        const length = direction.length();
+        const limb = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.84, radius * 1.24, length, 12, 1), material);
+        limb.position.copy(start).add(end).multiplyScalar(0.5);
+        limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+        return addPart(limb);
+      };
       const model = weaponModels.get(weapon.id)?.clone(true);
+      const usesDetailedModel = Boolean(model?.userData.detailedViewmodel);
 
       if (model) {
-        model.rotation.y = Math.PI / 2;
-        model.scale.setScalar(weapon.id === "akm" ? 0.29 : 0.44);
-        model.position.set(0, weapon.id === "akm" ? -0.02 : -0.035, weapon.id === "akm" ? -0.08 : -0.03);
+        model.rotation.y = usesDetailedModel ? Number(model.userData.viewRotationY ?? 0) : Math.PI / 2;
+        model.rotation.z = weapon.id === "akm" && !usesDetailedModel ? -0.018 : 0;
+        model.scale.setScalar(usesDetailedModel ? Number(model.userData.viewScale ?? 0.1) : weapon.id === "akm" ? 0.29 : 0.45);
+        model.position.set(0, weapon.id === "akm" ? 0.01 : -0.025, usesDetailedModel ? Number(model.userData.viewPositionZ ?? -0.04) : weapon.id === "akm" ? -0.11 : -0.035);
         addObject(model);
       } else {
         const receiver = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.18, weapon.length * 0.58, 3, 0.025), metal));
@@ -561,30 +588,47 @@ export function BreachlineGame() {
         frontSight.position.set(0, 0.17, -weapon.length * 0.86);
       }
 
-      const rightHand = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.145, 0.19, 0.115, 4, 0.032), glove));
-      rightHand.rotation.set(-0.2, 0, -0.06);
-      rightHand.position.set(0.025, -0.21, -0.08);
-      const leftHand = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.13, 0.18, 4, 0.034), glove));
-      leftHand.rotation.set(0.14, 0, 0.08);
-      leftHand.position.set(-0.025, -0.075, -weapon.length * 0.82);
-      const rightForearm = addPart(new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 0.46, 8, 12), sleeve));
-      rightForearm.rotation.set(-0.68, 0, -0.16);
-      rightForearm.position.set(0.23, -0.55, 0.17);
-      for (let finger = 0; finger < 3; finger++) {
-        const rightFinger = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.026, 0.105, 0.065, 2, 0.012), glove));
-        rightFinger.rotation.x = -0.2;
-        rightFinger.position.set(-0.045 + finger * 0.045, -0.2, -0.145);
-        const leftFinger = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.06, 0.12, 2, 0.012), glove));
-        leftFinger.rotation.x = 0.26;
-        leftFinger.position.set(-0.06 + finger * 0.055, -0.09, -weapon.length * 0.89);
-      }
+      const rightGrip = new THREE.Vector3(0.045, -0.18, -0.035);
+      const leftGrip = weapon.id === "akm"
+        ? usesDetailedModel ? new THREE.Vector3(0.035, -0.13, -0.27) : new THREE.Vector3(-0.035, -0.13, -weapon.length * 0.72)
+        : new THREE.Vector3(-0.035, -0.185, -0.095);
+      addLimbBetween(new THREE.Vector3(0.46, -0.69, -0.06), rightGrip.clone().add(new THREE.Vector3(0.025, -0.02, 0.04)), 0.063, sleeve);
+      addLimbBetween(new THREE.Vector3(usesDetailedModel ? -0.2 : -0.36, -0.69, -0.04), leftGrip.clone().add(new THREE.Vector3(-0.015, -0.015, 0.05)), 0.061, sleeve);
 
-      muzzle.position.set(0, 0.02, -weapon.length * 1.48);
+      const makeHand = (position: THREE.Vector3, rotation: THREE.Euler, support: boolean) => {
+        const hand = new THREE.Group();
+        hand.position.copy(position);
+        hand.rotation.copy(rotation);
+        const palm = new THREE.Mesh(new RoundedBoxGeometry(support ? 0.135 : 0.135, support ? 0.088 : 0.165, support ? 0.18 : 0.11, 4, 0.027), glove);
+        palm.castShadow = true;
+        hand.add(palm);
+        const knuckle = new THREE.Mesh(new RoundedBoxGeometry(support ? 0.12 : 0.115, support ? 0.027 : 0.035, support ? 0.135 : 0.09, 3, 0.014), glovePad);
+        knuckle.position.set(0, support ? 0.045 : 0.07, -0.012);
+        knuckle.castShadow = true;
+        hand.add(knuckle);
+        for (let finger = 0; finger < 4; finger++) {
+          const digit = new THREE.Mesh(new THREE.CapsuleGeometry(0.014, support ? 0.068 : 0.062, 5, 8), glove);
+          digit.position.set(-0.048 + finger * 0.032, support ? -0.018 : -0.066 + finger * 0.002, support ? -0.085 : -0.055);
+          digit.rotation.x = support ? Math.PI / 2.35 : -0.28;
+          if (support) digit.rotation.z = (finger - 1.5) * 0.055;
+          digit.castShadow = true;
+          hand.add(digit);
+        }
+        const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.016, 0.065, 5, 8), glove);
+        thumb.position.set(support ? 0.075 : -0.073, support ? 0.015 : -0.015, support ? -0.02 : -0.04);
+        thumb.rotation.set(support ? 0.8 : -0.55, 0, support ? -0.55 : 0.5);
+        thumb.castShadow = true;
+        hand.add(thumb);
+        hand.traverse((child) => { if (child instanceof THREE.Mesh) child.castShadow = true; });
+        return addObject(hand);
+      };
+      makeHand(rightGrip, new THREE.Euler(-0.22, 0.02, -0.12), false);
+      makeHand(leftGrip, new THREE.Euler(weapon.id === "akm" ? 0.12 : -0.3, weapon.id === "akm" ? 0 : -0.18, weapon.id === "akm" ? 0.04 : 0.28), true);
+
+      const muzzleZ = usesDetailedModel ? Number(model?.userData.viewMuzzleZ ?? -0.54) : -weapon.length * 1.48;
+      muzzle.position.set(0, 0.025, muzzleZ);
+      muzzleFlash.position.set(0, 0.025, muzzleZ);
     };
-
-    const muzzle = new THREE.PointLight(0xff9a52, 0, 4, 2);
-    muzzle.position.set(0, 0.04, -1);
-    gun.add(muzzle);
 
     const modelBase = new URL("./models/quaternius/", window.location.href).href;
     const upgradeWeaponMaterials = (object: THREE.Group) => {
@@ -594,17 +638,18 @@ export function BreachlineGame() {
         const upgraded = sourceMaterials.map((source) => {
           const name = source.name.toLowerCase();
           const isWood = name.includes("wood");
+          const isDarkWood = name.includes("darkwood");
           const isMetal = name.includes("metal");
-          const color = "color" in source && source.color instanceof THREE.Color ? source.color.clone() : new THREE.Color(0x292b2a);
-          if (isWood) color.multiplyScalar(2.45);
-          else color.multiplyScalar(isMetal ? 1.85 : 1.55);
+          const isBlack = name.includes("black");
+          const color = new THREE.Color(isWood ? (isDarkWood ? 0x321b13 : 0x542a18) : isMetal ? (name.includes("dark") ? 0x1b1e1f : 0x343738) : isBlack ? 0x0d1011 : 0x242627);
           return new THREE.MeshPhysicalMaterial({
             name: source.name,
             color,
-            roughness: isWood ? 0.5 : isMetal ? 0.3 : 0.68,
-            metalness: isWood ? 0.04 : isMetal ? 0.84 : 0.24,
-            clearcoat: isWood ? 0.28 : 0.08,
-            clearcoatRoughness: isWood ? 0.38 : 0.5,
+            roughness: isWood ? 0.42 : isMetal ? 0.24 : 0.62,
+            metalness: isWood ? 0.02 : isMetal ? 0.92 : isBlack ? 0.28 : 0.18,
+            clearcoat: isWood ? 0.34 : 0.12,
+            clearcoatRoughness: isWood ? 0.32 : 0.46,
+            envMapIntensity: isMetal ? 1.35 : 0.86,
           });
         });
         child.material = Array.isArray(child.material) ? upgraded : upgraded[0];
@@ -613,7 +658,25 @@ export function BreachlineGame() {
       });
       return object;
     };
-    const loadWeaponModel = (id: "akm" | "v9", filename: string) => {
+    const refreshBotWeaponModel = (root: THREE.Group) => {
+      const mount = root.userData.weaponMount as THREE.Group | undefined;
+      const source = weaponModels.get("akmBot") ?? weaponModels.get("akm");
+      if (!mount || !source) return;
+      mount.clear();
+      const model = source.clone(true);
+      model.rotation.y = Math.PI / 2;
+      model.scale.setScalar(0.255);
+      model.position.set(0.08, 1.19, -0.5);
+      model.traverse((child) => {
+        child.userData.botId = root.userData.botId;
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      mount.add(model);
+    };
+    const loadWeaponModel = (id: "akmBot" | "v9", filename: string) => {
       const materialLoader = new MTLLoader();
       materialLoader.setPath(modelBase);
       materialLoader.load(`${filename}.mtl`, (materials) => {
@@ -622,13 +685,74 @@ export function BreachlineGame() {
         objectLoader.setMaterials(materials);
         objectLoader.setPath(modelBase);
         objectLoader.load(`${filename}.obj`, (object) => {
-          weaponModels.set(id, upgradeWeaponMaterials(object));
-          if (weaponId === id) buildGun(WEAPONS[id]);
+          const existing = weaponModels.get(id);
+          if (!existing?.userData.detailedViewmodel) weaponModels.set(id, upgradeWeaponMaterials(object));
+          if (id === "akmBot") bots.forEach((bot) => refreshBotWeaponModel(bot.root));
+          if (weaponId === id && !existing?.userData.detailedViewmodel) buildGun(WEAPONS[id]);
         });
       });
     };
-    loadWeaponModel("akm", "AssaultRifle_2");
+    loadWeaponModel("akmBot", "AssaultRifle_2");
     loadWeaponModel("v9", "Pistol_1");
+    const detailedAkUrl = new URL("./models/lamoot/highpoly_ak47.obj", window.location.href).href;
+    new OBJLoader().load(detailedAkUrl, (object) => {
+      const bounds = new THREE.Box3().setFromObject(object);
+      const center = bounds.getCenter(new THREE.Vector3());
+      object.position.sub(center);
+      const wrapper = new THREE.Group();
+      wrapper.userData.detailedViewmodel = true;
+      wrapper.userData.viewScale = 0.108;
+      wrapper.userData.viewRotationY = 0;
+      wrapper.userData.viewPositionZ = -0.04;
+      wrapper.userData.viewMuzzleZ = -0.54;
+      wrapper.add(object);
+      object.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        child.material = new THREE.MeshPhysicalMaterial({
+          color: 0x1c2021,
+          roughness: 0.24,
+          metalness: 0.9,
+          clearcoat: 0.14,
+          clearcoatRoughness: 0.38,
+          envMapIntensity: 1.4,
+        });
+        child.castShadow = true;
+        child.receiveShadow = true;
+      });
+      weaponModels.set("akm", wrapper);
+      if (weaponId === "akm") buildGun(WEAPONS.akm);
+    });
+    const detailedPistolUrl = new URL("./models/locarem/Glock_HighPoly.obj", window.location.href).href;
+    new OBJLoader().load(detailedPistolUrl, (object) => {
+      const bounds = new THREE.Box3().setFromObject(object);
+      const center = bounds.getCenter(new THREE.Vector3());
+      object.position.sub(center);
+      object.rotation.x = -Math.PI / 2;
+      const wrapper = new THREE.Group();
+      wrapper.userData.detailedViewmodel = true;
+      wrapper.userData.viewScale = 0.055;
+      wrapper.userData.viewRotationY = -Math.PI / 2;
+      wrapper.userData.viewPositionZ = -0.17;
+      wrapper.userData.viewMuzzleZ = -0.42;
+      wrapper.add(object);
+      object.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+        const upgraded = sourceMaterials.map((_, index) => new THREE.MeshPhysicalMaterial({
+          color: index === 0 || index === 2 ? 0x1b1e20 : 0x111617,
+          roughness: index === 0 || index === 2 ? 0.22 : 0.68,
+          metalness: index === 0 || index === 2 ? 0.9 : 0.16,
+          clearcoat: 0.1,
+          clearcoatRoughness: 0.48,
+          envMapIntensity: 1.18,
+        }));
+        child.material = Array.isArray(child.material) ? upgraded : upgraded[0];
+        child.castShadow = true;
+        child.receiveShadow = true;
+      });
+      weaponModels.set("v9", wrapper);
+      if (weaponId === "v9") buildGun(WEAPONS.v9);
+    });
 
     const audio = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     const sound = (kind: "shot" | "hit" | "step" | "plant" | "explode" | "empty") => {
@@ -651,7 +775,6 @@ export function BreachlineGame() {
       osc.stop(now + duration);
     };
 
-    const bots: Bot[] = [];
     const createBotModel = (team: Team, id: string) => {
       const group = new THREE.Group();
       group.userData.botId = id;
@@ -720,6 +843,7 @@ export function BreachlineGame() {
       handA.position.set(-0.24, 1.09, -0.43);
       handB.position.set(0.25, 1.12, -0.48);
 
+      const weaponMount = new THREE.Group();
       const weaponBody = new THREE.Mesh(new RoundedBoxGeometry(0.13, 0.14, 0.62, 2, 0.018), metal);
       weaponBody.position.set(0.09, 1.2, -0.49);
       weaponBody.rotation.x = -0.08;
@@ -738,11 +862,13 @@ export function BreachlineGame() {
         group.add(pouch);
       }
 
+      weaponMount.add(weaponBody, weaponBarrel, weaponStock, weaponMag);
+      group.userData.weaponMount = weaponMount;
       group.userData.legA = legA;
       group.userData.legB = legB;
       group.userData.armA = armA;
       group.userData.armB = armB;
-      group.add(torso, pelvis, vest, frontPlate, backpack, neck, head, balaclava, helmet, helmetRail, goggles, legA, legB, bootA, bootB, kneeA, kneeB, armA, armB, handA, handB, weaponBody, weaponBarrel, weaponStock, weaponMag);
+      group.add(torso, pelvis, vest, frontPlate, backpack, neck, head, balaclava, helmet, helmetRail, goggles, legA, legB, bootA, bootB, kneeA, kneeB, armA, armB, handA, handB, weaponMount);
       group.traverse((child) => {
         child.userData.botId = id;
         if (child instanceof THREE.Mesh) {
@@ -750,6 +876,7 @@ export function BreachlineGame() {
           child.receiveShadow = true;
         }
       });
+      refreshBotWeaponModel(group);
       scene.add(group);
       return group;
     };
@@ -758,7 +885,27 @@ export function BreachlineGame() {
       const team: Team = i < 4 ? "attack" : "defend";
       const id = `bot-${i}`;
       const root = createBotModel(team, id);
-      bots.push({ id, name: BOT_NAMES[i], team, root, health: 100, alive: true, kills: 0, deaths: 0, fireCooldown: 0, decisionCooldown: 0, destination: new THREE.Vector3(), skill: 0.62, carryingBomb: false, defuseProgress: 0 });
+      bots.push({
+        id,
+        name: BOT_NAMES[i],
+        team,
+        root,
+        health: 100,
+        alive: true,
+        kills: 0,
+        deaths: 0,
+        fireCooldown: 0,
+        decisionCooldown: 0,
+        destination: new THREE.Vector3(),
+        skill: 0.62,
+        carryingBomb: false,
+        defuseProgress: 0,
+        deathTime: -1,
+        deathStart: new THREE.Vector3(),
+        deathStartQuaternion: new THREE.Quaternion(),
+        deathTargetQuaternion: new THREE.Quaternion(),
+        deathDrift: new THREE.Vector3(),
+      });
     }
 
     let screenActive = false;
@@ -790,9 +937,14 @@ export function BreachlineGame() {
     const velocity = new THREE.Vector3();
     let bob = 0;
     let recoil = 0;
+    let viewmodelSwayX = 0;
+    let viewmodelSwayY = 0;
     let jumpHeight = 0;
     let jumpVelocity = 0;
     let aiming = false;
+    let playerDeathTime = 0;
+    let playerDeathStartY = 1.68;
+    let playerDeathRoll = 0;
     let stepTimer = 0;
     let actionProgress = 0;
     let actionText = "";
@@ -810,8 +962,10 @@ export function BreachlineGame() {
     const keys = new Set<string>();
     const touchKeys = new Set<string>();
     const raycaster = new THREE.Raycaster();
-    const clock = new THREE.Clock();
-    const particles: { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number }[] = [];
+    const timer = new THREE.Timer();
+    timer.connect(document);
+    const particles: { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; spin?: THREE.Vector3 }[] = [];
+    const tracers: { mesh: THREE.Mesh; life: number; maxLife: number }[] = [];
     const smokes: { mesh: THREE.Mesh; life: number }[] = [];
     let intentionalUnlock = false;
     let buyOpen = false;
@@ -897,11 +1051,18 @@ export function BreachlineGame() {
       grenadeFrag = 1;
       grenadeSmoke = 1;
       camera.position.copy(spawnByTeam(playerTeam, 0)).setY(1.68);
-      yaw = playerTeam === "attack" ? Math.PI * 0.76 : -Math.PI * 0.24;
+      yaw = playerTeam === "attack" ? -Math.PI * 0.25 : Math.PI * 0.75;
       pitch = 0;
       jumpHeight = 0;
       jumpVelocity = 0;
       aiming = false;
+      playerDeathTime = 0;
+      playerDeathStartY = 1.68;
+      playerDeathRoll = 0;
+      viewmodelSwayX = 0;
+      viewmodelSwayY = 0;
+      gun.visible = true;
+      gun.rotation.set(0, 0, 0);
       velocity.set(0, 0, 0);
       bots.forEach((bot, index) => {
         bot.team = index < 4 ? playerTeam : otherTeam(playerTeam);
@@ -917,13 +1078,38 @@ export function BreachlineGame() {
         bot.decisionCooldown = 0;
         bot.defuseProgress = 0;
         bot.carryingBomb = false;
+        bot.deathTime = -1;
         const teamIndex = index < 4 ? index : index - 4;
         bot.root.position.copy(spawnByTeam(bot.team, teamIndex + (bot.team === playerTeam ? 1 : 0)));
+        bot.root.rotation.set(0, bot.team === "attack" ? -Math.PI * 0.25 : Math.PI * 0.75, 0);
+        const legA = bot.root.userData.legA as THREE.Mesh;
+        const legB = bot.root.userData.legB as THREE.Mesh;
+        const armA = bot.root.userData.armA as THREE.Mesh;
+        const armB = bot.root.userData.armB as THREE.Mesh;
+        legA.rotation.set(0, 0, 0);
+        legB.rotation.set(0, 0, 0);
+        armA.rotation.set(-0.82, 0, 0.2);
+        armB.rotation.set(-1.02, 0, -0.3);
         bot.destination.copy(bot.team === "attack" ? (index % 2 ? zoneA : zoneB) : (index % 2 ? zoneA : zoneB));
       });
       if (trainingMode) {
         bots.filter((b) => b.team === "attack").forEach((b) => { b.root.visible = false; b.alive = false; });
-        bots.filter((b) => b.team === "defend").forEach((b, i) => { if (i > 3) { b.root.visible = false; b.alive = false; } });
+        const targetPositions = [
+          new THREE.Vector3(-20, 0, 20),
+          new THREE.Vector3(-16, 0, 16),
+          new THREE.Vector3(-11, 0, 20),
+          new THREE.Vector3(-19, 0, 11),
+        ];
+        bots.filter((b) => b.team === "defend").forEach((b, i) => {
+          if (i > 3) {
+            b.root.visible = false;
+            b.alive = false;
+            return;
+          }
+          b.root.position.copy(targetPositions[i]);
+          b.root.rotation.set(0, Math.PI * 0.75, 0);
+          b.destination.copy(targetPositions[i]);
+        });
       }
       if (!ammo.v9) ammo.v9 = { clip: WEAPONS.v9.magazine, reserve: WEAPONS.v9.reserve };
       equip(primaryId ?? "v9");
@@ -956,7 +1142,7 @@ export function BreachlineGame() {
       }
     };
 
-    const damageBot = (bot: Bot, damage: number, attackerName: string, weapon: string, attackerTeam: Team) => {
+    const damageBot = (bot: Bot, damage: number, attackerName: string, weapon: string, attackerTeam: Team, hitDirection?: THREE.Vector3) => {
       if (!bot.alive) return;
       bot.health -= damage;
       if (attackerName === "YOU") {
@@ -965,7 +1151,16 @@ export function BreachlineGame() {
       }
       if (bot.health <= 0) {
         bot.alive = false;
-        bot.root.visible = false;
+        bot.root.visible = true;
+        bot.deathTime = 0;
+        bot.deathStart.copy(bot.root.position);
+        bot.deathStartQuaternion.copy(bot.root.quaternion);
+        const fallDirection = hitDirection?.clone().setY(0) ?? new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5);
+        if (fallDirection.lengthSq() < 0.001) fallDirection.set(0, 0, 1);
+        fallDirection.normalize();
+        bot.deathDrift.copy(fallDirection).multiplyScalar(0.42 + Math.random() * 0.22);
+        const fallRotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), fallDirection);
+        bot.deathTargetQuaternion.copy(fallRotation.multiply(bot.deathStartQuaternion));
         bot.deaths += 1;
         addFeed(attackerName, bot.name, weapon, attackerTeam === bot.team);
         if (attackerName === "YOU") {
@@ -991,6 +1186,11 @@ export function BreachlineGame() {
       if (playerHealth <= 0) {
         playerHealth = 0;
         playerAlive = false;
+        playerDeathTime = 0;
+        playerDeathStartY = camera.position.y;
+        playerDeathRoll = (Math.random() < 0.5 ? -1 : 1) * (0.72 + Math.random() * 0.28);
+        firing = false;
+        aiming = false;
         playerDeaths += 1;
         attacker.kills += 1;
         addFeed(attacker.name, "YOU", "AKM");
@@ -1011,6 +1211,32 @@ export function BreachlineGame() {
       }
     };
 
+    const spawnTracer = (start: THREE.Vector3, end: THREE.Vector3, color = 0xffc47d) => {
+      const direction = end.clone().sub(start);
+      const length = direction.length();
+      if (length < 0.05) return;
+      const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending, depthWrite: false });
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, length, 4), material);
+      mesh.position.copy(start).add(end).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+      scene.add(mesh);
+      tracers.push({ mesh, life: 0.07, maxLife: 0.07 });
+    };
+
+    const spawnCasing = () => {
+      const casing = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.012, 0.012, 0.038, 8),
+        new THREE.MeshStandardMaterial({ color: 0xb98532, roughness: 0.28, metalness: 0.9 }),
+      );
+      casing.rotation.z = Math.PI / 2;
+      const ejectionPoint = new THREE.Vector3(0.13, 0.08, -0.12);
+      gun.localToWorld(ejectionPoint);
+      casing.position.copy(ejectionPoint);
+      scene.add(casing);
+      const casingVelocity = new THREE.Vector3(1.55, 1.05, 0.22).applyQuaternion(camera.quaternion);
+      particles.push({ mesh: casing, velocity: casingVelocity, life: 1.15, spin: new THREE.Vector3(9, 15, 6) });
+    };
+
     const fireShot = () => {
       if (!screenActive || !playerAlive || phase === "roundEnd" || phase === "matchEnd") return;
       const now = performance.now() / 1000;
@@ -1028,8 +1254,11 @@ export function BreachlineGame() {
       recoil = Math.min(0.16, recoil + (weapon.id === "akm" ? 0.042 : 0.032));
       pitch = clamp(pitch + weapon.spread * 0.75, -1.2, 1.2);
       muzzle.intensity = 14;
-      window.setTimeout(() => { muzzle.intensity = 0; }, 38);
+      muzzleFlash.visible = true;
+      muzzleFlash.rotation.z = Math.random() * Math.PI;
+      window.setTimeout(() => { muzzle.intensity = 0; muzzleFlash.visible = false; }, 38);
       sound("shot");
+      spawnCasing();
 
       const pellets = weapon.pellets ?? 1;
       for (let pellet = 0; pellet < pellets; pellet++) {
@@ -1046,17 +1275,21 @@ export function BreachlineGame() {
         const wallHits = raycaster.intersectObjects(obstacleMeshes, false);
         const botHit = botHits[0];
         const wallHit = wallHits[0];
+        const endPoint = botHit && (!wallHit || botHit.distance < wallHit.distance)
+          ? botHit.point.clone()
+          : wallHit?.point.clone() ?? camera.position.clone().addScaledVector(direction, 70);
         if (botHit && (!wallHit || botHit.distance < wallHit.distance)) {
           const botId = botHit.object.userData.botId as string;
           const bot = bots.find((b) => b.id === botId);
           if (bot) {
             const headshot = botHit.object.userData.part === "head";
-            damageBot(bot, weapon.damage * (headshot ? 2.3 : 1), "YOU", weapon.short, playerTeam);
+            damageBot(bot, weapon.damage * (headshot ? 2.3 : 1), "YOU", weapon.short, playerTeam, direction);
             spawnImpact(botHit.point, headshot ? 0xff4d32 : 0xffa95a);
           }
         } else if (wallHit) {
           spawnImpact(wallHit.point, 0xffc58b);
         }
+        spawnTracer(muzzle.getWorldPosition(new THREE.Vector3()), endPoint);
       }
     };
 
@@ -1082,7 +1315,7 @@ export function BreachlineGame() {
       window.setTimeout(() => scene.remove(flash), 180);
       bots.filter((b) => b.alive && b.root.position.distanceTo(position) < 8).forEach((bot) => {
         const distance = bot.root.position.distanceTo(position);
-        damageBot(bot, Math.max(12, 108 - distance * 12), "YOU", "FRAG", playerTeam);
+        damageBot(bot, Math.max(12, 108 - distance * 12), "YOU", "FRAG", playerTeam, bot.root.position.clone().sub(position).normalize());
       });
       if (camera.position.distanceTo(position) < 8 && playerAlive) {
         const distance = camera.position.distanceTo(position);
@@ -1167,6 +1400,31 @@ export function BreachlineGame() {
     };
 
     const updateBots = (dt: number) => {
+      for (const bot of bots) {
+        if (bot.alive || bot.deathTime < 0 || !bot.root.visible) continue;
+        bot.deathTime = Math.min(1.2, bot.deathTime + dt);
+        const fallT = clamp(bot.deathTime / 0.62, 0, 1);
+        const eased = 1 - Math.pow(1 - fallT, 3);
+        bot.root.position.copy(bot.deathStart).addScaledVector(bot.deathDrift, eased);
+        bot.root.position.y = THREE.MathUtils.lerp(bot.deathStart.y, 0.075, eased);
+        bot.root.quaternion.slerpQuaternions(bot.deathStartQuaternion, bot.deathTargetQuaternion, eased);
+        const legA = bot.root.userData.legA as THREE.Mesh;
+        const legB = bot.root.userData.legB as THREE.Mesh;
+        const armA = bot.root.userData.armA as THREE.Mesh;
+        const armB = bot.root.userData.armB as THREE.Mesh;
+        legA.rotation.z = THREE.MathUtils.lerp(legA.rotation.z, 0.24, dt * 7);
+        legB.rotation.z = THREE.MathUtils.lerp(legB.rotation.z, -0.28, dt * 7);
+        armA.rotation.set(
+          THREE.MathUtils.lerp(armA.rotation.x, -0.15, dt * 7),
+          0,
+          THREE.MathUtils.lerp(armA.rotation.z, 1.05, dt * 7),
+        );
+        armB.rotation.set(
+          THREE.MathUtils.lerp(armB.rotation.x, 0.2, dt * 7),
+          0,
+          THREE.MathUtils.lerp(armB.rotation.z, -1.08, dt * 7),
+        );
+      }
       if (phase !== "live") return;
       for (const bot of bots) {
         if (!bot.alive) continue;
@@ -1191,9 +1449,12 @@ export function BreachlineGame() {
             bot.fireCooldown = 0.18 + (1 - bot.skill) * 0.35 + Math.random() * 0.12;
             const distance = bot.root.position.distanceTo(target.position);
             const hitChance = clamp(bot.skill * (1 - distance / 70), 0.16, 0.82);
+            const shotEnd = targetEye.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.42, (Math.random() - 0.5) * 0.35, (Math.random() - 0.5) * 0.42));
+            spawnTracer(botEye, shotEnd, 0xff9a55);
+            if (distance < 24) sound("shot");
             if (Math.random() < hitChance) {
               if (target.player) damagePlayer(9 + Math.random() * 13, bot);
-              else if (target.bot) damageBot(target.bot, 11 + Math.random() * 15, bot.name, "AKM", bot.team);
+              else if (target.bot) damageBot(target.bot, 11 + Math.random() * 15, bot.name, "AKM", bot.team, target.bot.root.position.clone().sub(bot.root.position).normalize());
             }
           }
           continue;
@@ -1287,7 +1548,20 @@ export function BreachlineGame() {
       const targetFov = aiming ? (weaponId === "akm" ? 58 : 64) : settingsRef.current.fov;
       camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 8);
       camera.updateProjectionMatrix();
-      if (!playerAlive || phase === "roundEnd" || phase === "matchEnd") return;
+      viewmodelSwayX = THREE.MathUtils.lerp(viewmodelSwayX, 0, dt * 7.5);
+      viewmodelSwayY = THREE.MathUtils.lerp(viewmodelSwayY, 0, dt * 7.5);
+      if (!playerAlive) {
+        playerDeathTime += dt;
+        const fallT = clamp(playerDeathTime / 0.72, 0, 1);
+        const eased = 1 - Math.pow(1 - fallT, 3);
+        camera.position.y = THREE.MathUtils.lerp(playerDeathStartY, 0.31, eased);
+        camera.rotation.set(pitch + eased * 0.14, yaw, playerDeathRoll * eased);
+        gun.position.y -= dt * 1.9;
+        gun.rotation.z += dt * playerDeathRoll * 2.1;
+        if (playerDeathTime > 0.24) gun.visible = false;
+        return;
+      }
+      if (phase === "roundEnd" || phase === "matchEnd") return;
       const forwardInput = (keys.has("KeyW") || touchKeys.has("forward") ? 1 : 0) - (keys.has("KeyS") || touchKeys.has("back") ? 1 : 0);
       const sideInput = (keys.has("KeyD") || touchKeys.has("right") ? 1 : 0) - (keys.has("KeyA") || touchKeys.has("left") ? 1 : 0);
       const crouched = keys.has("ControlLeft") || touchKeys.has("crouch");
@@ -1317,10 +1591,19 @@ export function BreachlineGame() {
       const height = crouched ? 1.18 : 1.68;
       camera.position.y = THREE.MathUtils.lerp(camera.position.y, height + jumpHeight + (moving && jumpHeight === 0 ? Math.sin(bob) * 0.035 : 0), dt * 12);
       recoil = THREE.MathUtils.lerp(recoil, 0, dt * 9);
-      gun.position.y = -0.34 + (moving ? Math.abs(Math.sin(bob)) * 0.018 : 0) + recoil * 0.45;
-      gun.position.x = THREE.MathUtils.lerp(gun.position.x, aiming ? 0 : 0.34, dt * 10);
-      gun.position.z = THREE.MathUtils.lerp(gun.position.z, (aiming ? -0.48 : -0.58) + recoil, dt * 12);
-      gun.rotation.x = recoil * 1.4;
+      const reloadRemaining = Math.max(0, reloadingUntil - performance.now() / 1000);
+      const reloadPose = reloadRemaining > 0 ? Math.sin((1 - reloadRemaining / currentWeapon().reload) * Math.PI) : 0;
+      const walkX = moving ? Math.sin(bob * 0.5) * 0.018 : 0;
+      const walkY = moving ? Math.abs(Math.sin(bob)) * 0.014 : 0;
+      const baseX = aiming ? 0 : weaponId === "akm" ? 0.34 : 0.295;
+      const baseY = aiming ? -0.285 : weaponId === "akm" ? -0.31 : -0.3;
+      const baseZ = aiming ? (weaponId === "akm" ? -0.45 : -0.43) : (weaponId === "akm" ? -0.57 : -0.52);
+      gun.position.x = THREE.MathUtils.lerp(gun.position.x, baseX + walkX + viewmodelSwayX, dt * 11);
+      gun.position.y = THREE.MathUtils.lerp(gun.position.y, baseY + walkY + recoil * 0.38 + viewmodelSwayY - reloadPose * 0.09, dt * 12);
+      gun.position.z = THREE.MathUtils.lerp(gun.position.z, baseZ + recoil + reloadPose * 0.08, dt * 12);
+      gun.rotation.x = recoil * 1.28 + viewmodelSwayY * 0.75 + reloadPose * 0.48;
+      gun.rotation.y = (aiming ? 0 : weaponId === "akm" ? 0.11 : 0.32) + viewmodelSwayX * 0.8 - reloadPose * 0.22;
+      gun.rotation.z = -walkX * 0.55 - viewmodelSwayX * 0.6 + reloadPose * 0.86;
       camera.rotation.set(pitch, yaw, 0);
       if (firing) fireShot();
     };
@@ -1390,12 +1673,16 @@ export function BreachlineGame() {
       const sensitivity = settingsRef.current.sensitivity * 0.0019;
       yaw -= event.movementX * sensitivity;
       pitch = clamp(pitch - event.movementY * sensitivity, -1.34, 1.34);
+      viewmodelSwayX = clamp(viewmodelSwayX - event.movementX * 0.00022, -0.032, 0.032);
+      viewmodelSwayY = clamp(viewmodelSwayY - event.movementY * 0.00018, -0.026, 0.026);
     };
     const onMouseDown = (event: MouseEvent) => {
       if (!screenActive) return;
       if (document.pointerLockElement !== renderer.domElement) {
         lockPointer();
         audio.resume();
+        if (event.button === 0) fireShot();
+        if (event.button === 2) aiming = true;
         return;
       }
       if (event.button === 0) { firing = true; fireShot(); }
@@ -1500,7 +1787,8 @@ export function BreachlineGame() {
     let raf = 0;
     const animate = () => {
       raf = requestAnimationFrame(animate);
-      const dt = Math.min(clock.getDelta(), 0.05);
+      timer.update();
+      const dt = Math.min(timer.getDelta(), 0.05);
       updateRound(dt);
       updatePlayer(dt);
       updateBots(dt);
@@ -1515,7 +1803,18 @@ export function BreachlineGame() {
         particle.life -= dt;
         particle.velocity.y -= 5 * dt;
         particle.mesh.position.addScaledVector(particle.velocity, dt);
+        if (particle.spin) {
+          particle.mesh.rotation.x += particle.spin.x * dt;
+          particle.mesh.rotation.y += particle.spin.y * dt;
+          particle.mesh.rotation.z += particle.spin.z * dt;
+        }
         if (particle.life <= 0) { scene.remove(particle.mesh); particles.splice(i, 1); }
+      }
+      for (let i = tracers.length - 1; i >= 0; i--) {
+        const tracer = tracers[i];
+        tracer.life -= dt;
+        (tracer.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, tracer.life / tracer.maxLife) * 0.72;
+        if (tracer.life <= 0) { scene.remove(tracer.mesh); tracers.splice(i, 1); }
       }
       for (let i = smokes.length - 1; i >= 0; i--) {
         const smoke = smokes[i];
@@ -1538,6 +1837,7 @@ export function BreachlineGame() {
 
     return () => {
       cancelAnimationFrame(raf);
+      timer.dispose();
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("keydown", onKeyDown);
