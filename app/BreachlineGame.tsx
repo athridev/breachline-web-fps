@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 
 type Team = "attack" | "defend";
 type Phase = "briefing" | "buy" | "live" | "roundEnd" | "matchEnd";
@@ -204,22 +209,52 @@ export function BreachlineGame() {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 1.16;
     renderer.domElement.className = "game-canvas";
     renderer.domElement.setAttribute("aria-label", "Breachline first-person game view");
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x8ba3ad);
-    scene.fog = new THREE.FogExp2(0x75888d, 0.0125);
+    scene.background = new THREE.Color(0x7893a1);
+    scene.fog = new THREE.FogExp2(0x83939a, 0.0095);
 
     const camera = new THREE.PerspectiveCamera(settingsRef.current.fov, mount.clientWidth / mount.clientHeight, 0.05, 180);
     camera.rotation.order = "YXZ";
     camera.position.set(-24, 1.68, 23);
 
-    const hemi = new THREE.HemisphereLight(0xd9efff, 0x4b4034, 1.7);
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(mount.clientWidth, mount.clientHeight), 0.2, 0.52, 0.88);
+    const outputPass = new OutputPass();
+    composer.addPass(renderPass);
+    composer.addPass(bloomPass);
+    composer.addPass(outputPass);
+
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(115, 32, 20),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        uniforms: {
+          topColor: { value: new THREE.Color(0x527486) },
+          horizonColor: { value: new THREE.Color(0xe8c394) },
+          bottomColor: { value: new THREE.Color(0x9d8b72) },
+          offset: { value: 10 },
+          exponent: { value: 0.72 },
+        },
+        vertexShader: "varying vec3 vWorldPosition; void main(){ vec4 worldPosition = modelMatrix * vec4(position, 1.0); vWorldPosition = worldPosition.xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+        fragmentShader: "uniform vec3 topColor; uniform vec3 horizonColor; uniform vec3 bottomColor; uniform float offset; uniform float exponent; varying vec3 vWorldPosition; void main(){ float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y; float upper = pow(max(h, 0.0), exponent); float lower = smoothstep(-0.35, 0.05, h); vec3 lowerMix = mix(bottomColor, horizonColor, lower); gl_FragColor = vec4(mix(lowerMix, topColor, upper), 1.0); }",
+      }),
+    );
+    scene.add(sky);
+
+    const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(2.4, 24, 16), new THREE.MeshBasicMaterial({ color: 0xffe0a6, fog: false }));
+    sunDisc.position.set(-64, 42, 48);
+    scene.add(sunDisc);
+
+    const hemi = new THREE.HemisphereLight(0xd9efff, 0x4b4034, 1.36);
     scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffddaf, 3.1);
+    const sun = new THREE.DirectionalLight(0xffd6a0, 3.55);
     sun.position.set(-22, 34, 16);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -227,25 +262,60 @@ export function BreachlineGame() {
     sun.shadow.camera.right = 48;
     sun.shadow.camera.top = 48;
     sun.shadow.camera.bottom = -48;
+    sun.shadow.bias = -0.0003;
+    sun.shadow.normalBias = 0.025;
     scene.add(sun);
 
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x8a8272, roughness: 0.88, metalness: 0.08 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(72, 72), floorMat);
+    const fill = new THREE.DirectionalLight(0x78a7bd, 0.72);
+    fill.position.set(26, 12, -24);
+    scene.add(fill);
+
+    const textureLoader = new THREE.TextureLoader();
+    const textureUrl = (name: string) => new URL(`./textures/${name}`, window.location.href).href;
+    const tiledTexture = (name: string, x: number, y: number, color = true) => {
+      const texture = textureLoader.load(textureUrl(name));
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.repeat.set(x, y);
+      texture.anisotropy = Math.min(12, renderer.capabilities.getMaxAnisotropy());
+      texture.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      return texture;
+    };
+    const groundTexture = tiledTexture("ground-v2.avif", 11, 11);
+    const groundBump = tiledTexture("ground-v2.avif", 11, 11, false);
+    const concreteTexture = tiledTexture("concrete-v2.avif", 2.2, 2.2);
+    const concreteBump = tiledTexture("concrete-v2.avif", 2.2, 2.2, false);
+    const metalTexture = tiledTexture("metal-v2.avif", 1.5, 1.25);
+    const metalBump = tiledTexture("metal-v2.avif", 1.5, 1.25, false);
+
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xb2aa9d, map: groundTexture, bumpMap: groundBump, bumpScale: 0.16, roughness: 0.91, metalness: 0.04 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(72, 72, 16, 16), floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
 
-    const grid = new THREE.GridHelper(72, 36, 0x5a5f5c, 0x77766d);
-    grid.position.y = 0.012;
-    (grid.material as THREE.Material).opacity = 0.22;
-    (grid.material as THREE.Material).transparent = true;
-    scene.add(grid);
+    const paintMaterial = new THREE.MeshStandardMaterial({ color: 0xd7c49b, roughness: 0.96, transparent: true, opacity: 0.42, polygonOffset: true, polygonOffsetFactor: -2 });
+    for (const [x, z, w, d, rotation] of [[0, 0, 0.12, 54, 0], [-15, 11, 0.12, 18, 0], [16, -11, 0.12, 20, 0], [0, 0, 28, 0.12, 0]] as number[][]) {
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(w, d), paintMaterial);
+      line.rotation.x = -Math.PI / 2;
+      line.rotation.z = rotation;
+      line.position.set(x, 0.018, z);
+      scene.add(line);
+    }
 
     const obstacles: Obstacle[] = [];
     const obstacleMeshes: THREE.Object3D[] = [];
     const addBox = (x: number, z: number, w: number, d: number, h: number, color: number, metal = 0.15) => {
-      const material = new THREE.MeshStandardMaterial({ color, roughness: metal > 0.5 ? 0.42 : 0.82, metalness: metal });
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      const isMetal = metal > 0.5;
+      const material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color).lerp(new THREE.Color(isMetal ? 0xb9b9b2 : 0xd7d2c8), 0.68),
+        map: isMetal ? metalTexture : concreteTexture,
+        bumpMap: isMetal ? metalBump : concreteBump,
+        bumpScale: isMetal ? 0.09 : 0.12,
+        roughness: isMetal ? 0.48 : 0.86,
+        metalness: isMetal ? 0.68 : 0.05,
+      });
+      const radius = Math.min(0.11, w * 0.025, d * 0.025, h * 0.025);
+      const mesh = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, radius), material);
       mesh.position.set(x, h / 2, z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -276,7 +346,7 @@ export function BreachlineGame() {
     addBox(-1, 27, 2.8, 2.8, 1.9, 0x715c40, 0.35);
     addBox(2, -29, 2.8, 2.8, 1.9, 0x715c40, 0.35);
 
-    const beamMaterial = new THREE.MeshStandardMaterial({ color: 0x303739, metalness: 0.82, roughness: 0.34 });
+    const beamMaterial = new THREE.MeshStandardMaterial({ color: 0x656d6c, map: metalTexture, bumpMap: metalBump, bumpScale: 0.07, metalness: 0.78, roughness: 0.38 });
     for (const z of [-12, 13]) {
       const left = new THREE.Mesh(new THREE.BoxGeometry(0.5, 8, 0.5), beamMaterial);
       const right = left.clone();
@@ -284,15 +354,113 @@ export function BreachlineGame() {
       left.position.set(-6, 4, z);
       right.position.set(6, 4, z);
       top.position.set(0, 7.7, z);
+      left.castShadow = right.castShadow = top.castShadow = true;
       scene.add(left, right, top);
+
+      const catwalk = new THREE.Mesh(new THREE.BoxGeometry(11.5, 0.16, 1.5), beamMaterial);
+      catwalk.position.set(0, 6.55, z);
+      catwalk.castShadow = true;
+      catwalk.receiveShadow = true;
+      scene.add(catwalk);
+      for (const side of [-1, 1]) {
+        const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 11.3, 8), beamMaterial);
+        rail.rotation.z = Math.PI / 2;
+        rail.position.set(0, 7.45, z + side * 0.68);
+        scene.add(rail);
+        for (let x = -5.5; x <= 5.5; x += 1.35) {
+          const post = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.9, 7), beamMaterial);
+          post.position.set(x, 7.02, z + side * 0.68);
+          scene.add(post);
+        }
+      }
     }
+
+    const pipeMaterial = new THREE.MeshStandardMaterial({ color: 0x6b7474, metalness: 0.82, roughness: 0.3 });
+    const addPipe = (x: number, y: number, z: number, length: number, rotation: "x" | "z") => {
+      const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, length, 14), pipeMaterial);
+      if (rotation === "x") pipe.rotation.z = Math.PI / 2;
+      else pipe.rotation.x = Math.PI / 2;
+      pipe.position.set(x, y, z);
+      pipe.castShadow = true;
+      scene.add(pipe);
+      for (const offset of [-length * 0.32, length * 0.32]) {
+        const collar = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.035, 7, 14), pipeMaterial);
+        if (rotation === "x") collar.rotation.y = Math.PI / 2;
+        collar.position.set(x + (rotation === "x" ? offset : 0), y, z + (rotation === "z" ? offset : 0));
+        scene.add(collar);
+      }
+    };
+    addPipe(-18, 5.1, 2.7, 9, "x");
+    addPipe(18, 4.8, -10.6, 8, "x");
+    addPipe(31.2, 3.3, 8, 12, "z");
+    addPipe(-31.2, 3.8, -10, 14, "z");
+
+    const crateMaterial = new THREE.MeshStandardMaterial({ color: 0x9d8c72, map: concreteTexture, bumpMap: concreteBump, bumpScale: 0.08, roughness: 0.84, metalness: 0.04 });
+    for (const [x, z, rotation] of [[-21, 14, 0.1], [-22.4, 14.5, -0.2], [22, -17, 0.14], [13, 10, -0.1], [-12, -11, 0.2]] as number[][]) {
+      const pallet = new THREE.Group();
+      for (let i = 0; i < 3; i++) {
+        const crate = new THREE.Mesh(new RoundedBoxGeometry(1.15, 0.72, 0.9, 2, 0.055), crateMaterial);
+        crate.position.set((i % 2) * 1.05, 0.38 + Math.floor(i / 2) * 0.74, 0);
+        crate.castShadow = true;
+        crate.receiveShadow = true;
+        pallet.add(crate);
+      }
+      pallet.position.set(x, 0, z);
+      pallet.rotation.y = rotation;
+      scene.add(pallet);
+    }
+
+    const barrelMaterial = new THREE.MeshStandardMaterial({ color: 0x657071, map: metalTexture, roughness: 0.44, metalness: 0.62 });
+    for (const [x, z] of [[-29, 20], [-28.4, 20.7], [27, -19], [15, 28], [-13, -29]] as number[][]) {
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.92, 18, 1), barrelMaterial);
+      barrel.position.set(x, 0.46, z);
+      barrel.castShadow = true;
+      scene.add(barrel);
+      for (const y of [0.18, 0.74]) {
+        const band = new THREE.Mesh(new THREE.TorusGeometry(0.345, 0.025, 8, 18), pipeMaterial);
+        band.rotation.x = Math.PI / 2;
+        band.position.set(x, y, z);
+        scene.add(band);
+      }
+    }
+
+    const mountainMaterial = new THREE.MeshStandardMaterial({ color: 0x776a59, roughness: 1, flatShading: true });
+    for (let i = 0; i < 18; i++) {
+      const angle = (i / 18) * Math.PI * 2;
+      const radius = 60 + (i % 3) * 6;
+      const mountain = new THREE.Mesh(new THREE.ConeGeometry(8 + (i % 4) * 2.5, 14 + (i % 5) * 3, 7), mountainMaterial);
+      mountain.position.set(Math.cos(angle) * radius, 4 + (i % 2) * 2, Math.sin(angle) * radius);
+      mountain.rotation.y = angle * 1.7;
+      scene.add(mountain);
+    }
+
+    const dustGeometry = new THREE.BufferGeometry();
+    const dustPositions = new Float32Array(850 * 3);
+    for (let i = 0; i < 850; i++) {
+      dustPositions[i * 3] = (Math.random() - 0.5) * 70;
+      dustPositions[i * 3 + 1] = Math.random() * 8;
+      dustPositions[i * 3 + 2] = (Math.random() - 0.5) * 70;
+    }
+    dustGeometry.setAttribute("position", new THREE.BufferAttribute(dustPositions, 3));
+    const dust = new THREE.Points(dustGeometry, new THREE.PointsMaterial({ color: 0xe7c99f, size: 0.045, transparent: true, opacity: 0.4, depthWrite: false }));
+    scene.add(dust);
 
     const towerBase = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.4, 9, 6), beamMaterial);
     towerBase.position.set(28, 4.5, -27);
+    towerBase.castShadow = true;
     scene.add(towerBase);
-    const beacon = new THREE.PointLight(0xff5b22, 12, 18, 2);
+    const beacon = new THREE.PointLight(0xff5b22, 24, 22, 2);
     beacon.position.set(28, 10, -27);
     scene.add(beacon);
+
+    for (const [x, y, z, color] of [[-17, 5.5, -17, 0xffa35e], [18, 5.8, 16, 0x8ed6ee], [-28, 4, 10, 0xffb170], [27, 4, -8, 0x91d4e8]] as number[][]) {
+      const lamp = new THREE.PointLight(color, 8, 10, 2);
+      lamp.position.set(x, y, z);
+      scene.add(lamp);
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.08, 10, 8), new THREE.MeshBasicMaterial({ color }));
+      bulb.position.copy(lamp.position);
+      scene.add(bulb);
+    }
 
     const zoneA = new THREE.Vector3(-24, 0, -23);
     const zoneB = new THREE.Vector3(24, 0, 22);
@@ -316,27 +484,78 @@ export function BreachlineGame() {
     const buildGun = (weapon: Weapon) => {
       for (const child of gunMeshes) gun.remove(child);
       gunMeshes = [];
-      const material = new THREE.MeshStandardMaterial({ color: weapon.color, roughness: 0.4, metalness: 0.72 });
-      const accent = new THREE.MeshStandardMaterial({ color: 0xd25f24, roughness: 0.52, metalness: 0.45 });
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, weapon.length), material);
-      body.position.z = -weapon.length * 0.28;
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, weapon.length * 0.58, 10), material);
+      const metal = new THREE.MeshPhysicalMaterial({ color: weapon.color, roughness: 0.27, metalness: 0.88, clearcoat: 0.12, clearcoatRoughness: 0.35 });
+      const polymer = new THREE.MeshStandardMaterial({ color: 0x171d1f, roughness: 0.62, metalness: 0.18 });
+      const rubber = new THREE.MeshStandardMaterial({ color: 0x101415, roughness: 0.9, metalness: 0.02 });
+      const accent = new THREE.MeshStandardMaterial({ color: 0xd45b22, roughness: 0.46, metalness: 0.52 });
+      const glass = new THREE.MeshPhysicalMaterial({ color: 0x243b43, emissive: 0x0d2c38, emissiveIntensity: 0.45, roughness: 0.05, metalness: 0.1, transmission: 0.22, transparent: true, opacity: 0.86 });
+      const glove = new THREE.MeshStandardMaterial({ color: 0x242b2a, roughness: 0.92, metalness: 0.02 });
+      const addPart = (mesh: THREE.Mesh) => { mesh.castShadow = true; gun.add(mesh); gunMeshes.push(mesh); return mesh; };
+
+      const receiver = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.18, weapon.length * 0.58, 3, 0.025), metal));
+      receiver.position.set(0, 0.01, -weapon.length * 0.2);
+      const upper = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.07, weapon.length * 0.62, 2, 0.012), polymer));
+      upper.position.set(0, 0.115, -weapon.length * 0.34);
+      const handguard = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.088, weapon.length * 0.48, 12), polymer));
+      handguard.rotation.x = Math.PI / 2;
+      handguard.position.set(0, 0.012, -weapon.length * 0.72);
+      const barrel = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.023, weapon.length * 0.72, 12), metal));
       barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 0.025, -weapon.length * 0.85);
-      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.27, 0.15), material);
-      grip.rotation.x = -0.23;
-      grip.position.set(0, -0.15, -0.12);
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.025, 0.14), accent);
-      stripe.position.set(0, 0.09, -weapon.length * 0.35);
-      gun.add(body, barrel, grip, stripe);
-      gunMeshes = [body, barrel, grip, stripe];
-      if (weapon.id === "spectre") {
-        const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.3, 12), material);
-        scope.rotation.z = Math.PI / 2;
-        scope.position.set(0, 0.16, -0.32);
-        gun.add(scope);
-        gunMeshes.push(scope);
+      barrel.position.set(0, 0.02, -weapon.length * 1.05);
+      const muzzleBrake = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.11, 12), metal));
+      muzzleBrake.rotation.x = Math.PI / 2;
+      muzzleBrake.position.set(0, 0.02, -weapon.length * 1.39);
+      const grip = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.115, 0.29, 0.14, 2, 0.025), rubber));
+      grip.rotation.x = -0.24;
+      grip.position.set(0, -0.18, -0.05);
+      const magazine = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.13, weapon.id === "v9" ? 0.24 : 0.32, 0.16, 2, 0.02), polymer));
+      magazine.rotation.x = -0.15;
+      magazine.position.set(0, -0.2, -weapon.length * 0.34);
+      const rail = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.022, weapon.length * 0.55), metal));
+      rail.position.set(0, 0.16, -weapon.length * 0.34);
+      const stripe = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.205, 0.028, 0.15), accent));
+      stripe.position.set(0, 0.065, -weapon.length * 0.38);
+
+      if (weapon.id !== "v9") {
+        const stock = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.24, 0.34, 3, 0.035), polymer));
+        stock.position.set(0, -0.02, weapon.length * 0.19);
+        const butt = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.19, 0.3, 0.075, 2, 0.025), rubber));
+        butt.position.set(0, -0.01, weapon.length * 0.38);
       }
+
+      const rearSight = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.045), metal));
+      rearSight.position.set(0, 0.2, -0.02);
+      const frontSight = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.035), metal));
+      frontSight.position.set(0, 0.17, -weapon.length * 0.86);
+
+      if (weapon.id === "spectre" || weapon.id === "arclight") {
+        const scope = addPart(new THREE.Mesh(new THREE.CylinderGeometry(weapon.id === "spectre" ? 0.085 : 0.06, weapon.id === "spectre" ? 0.095 : 0.065, weapon.id === "spectre" ? 0.38 : 0.22, 18), polymer));
+        scope.rotation.x = Math.PI / 2;
+        scope.position.set(0, 0.235, -weapon.length * 0.28);
+        const lens = addPart(new THREE.Mesh(new THREE.CircleGeometry(weapon.id === "spectre" ? 0.077 : 0.052, 18), glass));
+        lens.position.set(0, 0.235, -weapon.length * 0.49);
+      }
+      if (weapon.id === "breach") {
+        const pump = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.28, 12), rubber));
+        pump.rotation.x = Math.PI / 2;
+        pump.position.set(0, -0.015, -weapon.length * 0.76);
+      }
+
+      const rightHand = addPart(new THREE.Mesh(new THREE.SphereGeometry(0.105, 14, 10), glove));
+      rightHand.scale.set(0.9, 1.2, 1.05);
+      rightHand.position.set(0.04, -0.27, -0.02);
+      const leftHand = addPart(new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), glove));
+      leftHand.scale.set(1.05, 0.85, 1.25);
+      leftHand.position.set(-0.04, -0.11, -weapon.length * 0.68);
+      const rightForearm = addPart(new THREE.Mesh(new THREE.CapsuleGeometry(0.095, 0.42, 6, 10), glove));
+      rightForearm.rotation.x = -0.72;
+      rightForearm.position.set(0.09, -0.52, 0.12);
+      const leftForearm = addPart(new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.44, 6, 10), glove));
+      leftForearm.rotation.x = -1.04;
+      leftForearm.rotation.z = 0.12;
+      leftForearm.position.set(-0.22, -0.38, -weapon.length * 0.35);
+
+      muzzle.position.set(0, 0.02, -weapon.length * 1.48);
     };
 
     const muzzle = new THREE.PointLight(0xff9a52, 0, 4, 2);
@@ -368,27 +587,94 @@ export function BreachlineGame() {
     const createBotModel = (team: Team, id: string) => {
       const group = new THREE.Group();
       group.userData.botId = id;
-      const uniform = new THREE.MeshStandardMaterial({ color: team === "attack" ? 0xb3572f : 0x326a78, roughness: 0.72, metalness: 0.16 });
-      const dark = new THREE.MeshStandardMaterial({ color: 0x202729, roughness: 0.78, metalness: 0.22 });
-      const skin = new THREE.MeshStandardMaterial({ color: 0x9c8068, roughness: 0.9 });
-      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.82, 0.36), uniform);
-      torso.position.y = 1.2;
+      const uniform = new THREE.MeshStandardMaterial({ color: team === "attack" ? 0x75402c : 0x294c55, roughness: 0.86, metalness: 0.04 });
+      const fabric = new THREE.MeshStandardMaterial({ color: 0x242a29, roughness: 0.94, metalness: 0.01 });
+      const armor = new THREE.MeshStandardMaterial({ color: 0x181e1f, roughness: 0.58, metalness: 0.34 });
+      const metal = new THREE.MeshStandardMaterial({ color: 0x252d2f, roughness: 0.29, metalness: 0.82 });
+      const skin = new THREE.MeshStandardMaterial({ color: 0x80634f, roughness: 0.92 });
+      const lens = new THREE.MeshPhysicalMaterial({ color: 0x1b3b44, emissive: 0x123039, emissiveIntensity: 0.24, metalness: 0.35, roughness: 0.08, transmission: 0.18, transparent: true, opacity: 0.9 });
+
+      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.48, 6, 12), uniform);
+      torso.scale.z = 0.72;
+      torso.position.y = 1.23;
       torso.userData.uniform = true;
-      const vest = new THREE.Mesh(new THREE.BoxGeometry(0.67, 0.54, 0.4), dark);
-      vest.position.set(0, 1.23, -0.025);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), skin);
-      head.position.y = 1.78;
+      const pelvis = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.27, 0.3, 2, 0.06), fabric);
+      pelvis.position.y = 0.82;
+      const vest = new THREE.Mesh(new RoundedBoxGeometry(0.63, 0.55, 0.39, 3, 0.055), armor);
+      vest.position.set(0, 1.29, -0.03);
+      const frontPlate = new THREE.Mesh(new RoundedBoxGeometry(0.43, 0.38, 0.075, 2, 0.025), armor);
+      frontPlate.position.set(0, 1.32, -0.22);
+      const backpack = new THREE.Mesh(new RoundedBoxGeometry(0.45, 0.55, 0.2, 2, 0.04), fabric);
+      backpack.position.set(0, 1.28, 0.25);
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.11, 0.16, 10), skin);
+      neck.position.y = 1.66;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.205, 18, 14), skin);
+      head.scale.z = 0.9;
+      head.position.y = 1.83;
       head.userData.part = "head";
-      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.235, 12, 7, 0, Math.PI * 2, 0, Math.PI / 2), dark);
-      helmet.position.y = 1.83;
-      const legA = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.75, 0.24), dark);
+      const balaclava = new THREE.Mesh(new THREE.SphereGeometry(0.211, 18, 14, 0, Math.PI * 2, Math.PI * 0.32, Math.PI * 0.66), fabric);
+      balaclava.position.set(0, 1.82, -0.005);
+      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.232, 18, 9, 0, Math.PI * 2, 0, Math.PI * 0.57), armor);
+      helmet.scale.z = 1.04;
+      helmet.position.y = 1.88;
+      const helmetRail = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.022, 7, 18, Math.PI * 1.12), metal);
+      helmetRail.rotation.x = Math.PI / 2;
+      helmetRail.position.set(0, 1.89, -0.01);
+      const goggles = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.075, 0.035, 2, 0.016), lens);
+      goggles.position.set(0, 1.85, -0.193);
+      goggles.userData.part = "head";
+
+      const legA = new THREE.Mesh(new THREE.CapsuleGeometry(0.115, 0.45, 5, 9), fabric);
       const legB = legA.clone();
-      legA.position.set(-0.18, 0.42, 0);
-      legB.position.set(0.18, 0.42, 0);
-      const weaponMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.78), dark);
-      weaponMesh.position.set(0.24, 1.25, -0.38);
-      weaponMesh.rotation.x = -0.2;
-      group.add(torso, vest, head, helmet, legA, legB, weaponMesh);
+      legA.position.set(-0.15, 0.47, 0);
+      legB.position.set(0.15, 0.47, 0);
+      const bootA = new THREE.Mesh(new RoundedBoxGeometry(0.22, 0.16, 0.35, 2, 0.04), armor);
+      const bootB = bootA.clone();
+      bootA.position.set(-0.15, 0.11, -0.06);
+      bootB.position.set(0.15, 0.11, -0.06);
+      const kneeA = new THREE.Mesh(new RoundedBoxGeometry(0.18, 0.18, 0.08, 2, 0.025), armor);
+      const kneeB = kneeA.clone();
+      kneeA.position.set(-0.15, 0.5, -0.13);
+      kneeB.position.set(0.15, 0.5, -0.13);
+
+      const armA = new THREE.Mesh(new THREE.CapsuleGeometry(0.095, 0.43, 5, 9), uniform);
+      const armB = armA.clone();
+      armA.userData.uniform = true;
+      armB.userData.uniform = true;
+      armA.rotation.x = -0.82;
+      armB.rotation.x = -1.02;
+      armA.rotation.z = 0.2;
+      armB.rotation.z = -0.3;
+      armA.position.set(-0.34, 1.26, -0.16);
+      armB.position.set(0.34, 1.24, -0.21);
+      const handA = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), fabric);
+      const handB = handA.clone();
+      handA.position.set(-0.24, 1.09, -0.43);
+      handB.position.set(0.25, 1.12, -0.48);
+
+      const weaponBody = new THREE.Mesh(new RoundedBoxGeometry(0.13, 0.14, 0.62, 2, 0.018), metal);
+      weaponBody.position.set(0.09, 1.2, -0.49);
+      weaponBody.rotation.x = -0.08;
+      const weaponBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.5, 10), metal);
+      weaponBarrel.rotation.x = Math.PI / 2;
+      weaponBarrel.position.set(0.09, 1.22, -1.02);
+      const weaponStock = new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.21, 0.24, 2, 0.025), armor);
+      weaponStock.position.set(0.09, 1.2, -0.12);
+      const weaponMag = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.25, 0.13, 2, 0.018), armor);
+      weaponMag.rotation.x = -0.18;
+      weaponMag.position.set(0.09, 1.03, -0.48);
+
+      for (const x of [-0.19, 0, 0.19]) {
+        const pouch = new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.17, 0.09, 2, 0.018), fabric);
+        pouch.position.set(x, 1.12, -0.26);
+        group.add(pouch);
+      }
+
+      group.userData.legA = legA;
+      group.userData.legB = legB;
+      group.userData.armA = armA;
+      group.userData.armB = armB;
+      group.add(torso, pelvis, vest, frontPlate, backpack, neck, head, balaclava, helmet, helmetRail, goggles, legA, legB, bootA, bootB, kneeA, kneeB, armA, armB, handA, handB, weaponBody, weaponBarrel, weaponStock, weaponMag);
       group.traverse((child) => {
         child.userData.botId = id;
         if (child instanceof THREE.Mesh) {
@@ -817,6 +1103,10 @@ export function BreachlineGame() {
       if (phase !== "live") return;
       for (const bot of bots) {
         if (!bot.alive) continue;
+        const legA = bot.root.userData.legA as THREE.Mesh;
+        const legB = bot.root.userData.legB as THREE.Mesh;
+        const armA = bot.root.userData.armA as THREE.Mesh;
+        const armB = bot.root.userData.armB as THREE.Mesh;
         bot.fireCooldown -= dt;
         bot.decisionCooldown -= dt;
         const target = pickBotTarget(bot);
@@ -826,6 +1116,10 @@ export function BreachlineGame() {
         if (targetVisible && target) {
           const desiredYaw = Math.atan2(target.position.x - bot.root.position.x, target.position.z - bot.root.position.z);
           bot.root.rotation.y = THREE.MathUtils.lerp(bot.root.rotation.y, desiredYaw, dt * 6);
+          legA.rotation.x = THREE.MathUtils.lerp(legA.rotation.x, 0, dt * 8);
+          legB.rotation.x = THREE.MathUtils.lerp(legB.rotation.x, 0, dt * 8);
+          armA.rotation.x = THREE.MathUtils.lerp(armA.rotation.x, -1.02, dt * 7);
+          armB.rotation.x = THREE.MathUtils.lerp(armB.rotation.x, -1.16, dt * 7);
           if (bot.fireCooldown <= 0) {
             bot.fireCooldown = 0.18 + (1 - bot.skill) * 0.35 + Math.random() * 0.12;
             const distance = bot.root.position.distanceTo(target.position);
@@ -877,6 +1171,11 @@ export function BreachlineGame() {
         if (!collides(nextX, bot.root.position.z, 0.4)) bot.root.position.x = nextX;
         if (!collides(bot.root.position.x, nextZ, 0.4)) bot.root.position.z = nextZ;
         bot.root.rotation.y = Math.atan2(direction.x, direction.z);
+        const stride = Math.sin(performance.now() * 0.008 + Number(bot.id.split("-")[1])) * 0.48;
+        legA.rotation.x = stride;
+        legB.rotation.x = -stride;
+        armA.rotation.x = -0.82 - stride * 0.16;
+        armB.rotation.x = -1.02 + stride * 0.12;
       }
     };
 
@@ -1073,6 +1372,7 @@ export function BreachlineGame() {
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       renderer.setSize(width, height);
+      composer.setSize(width, height);
       renderer.setPixelRatio(settingsRef.current.quality === "performance" ? 1 : Math.min(window.devicePixelRatio, settingsRef.current.quality === "ultra" ? 2 : 1.55));
     };
 
@@ -1163,7 +1463,11 @@ export function BreachlineGame() {
       snapshotAccumulator += dt;
       if (snapshotAccumulator > 0.08) { snapshotAccumulator = 0; publishSnapshot(); }
       mount.style.setProperty("--damage-flash", performance.now() < damageFlashUntil ? "0.52" : "0");
-      renderer.render(scene, camera);
+      dust.rotation.y += dt * 0.0025;
+      dust.position.x = Math.sin(performance.now() * 0.00008) * 0.8;
+      bloomPass.strength = settingsRef.current.quality === "performance" ? 0.06 : settingsRef.current.quality === "ultra" ? 0.27 : 0.18;
+      renderer.shadowMap.enabled = settingsRef.current.quality !== "performance";
+      composer.render(dt);
     };
     animate();
 
@@ -1177,6 +1481,7 @@ export function BreachlineGame() {
       renderer.domElement.removeEventListener("mousedown", onMouseDown);
       renderer.domElement.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("resize", onResize);
+      composer.dispose();
       renderer.dispose();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {

@@ -66,7 +66,9 @@ button { color: inherit; }
 .game-ui { position: absolute; inset: 0; z-index: 5; pointer-events: none; user-select: none; }
 .game-ui button { pointer-events: auto; }
 .damage-flash { position: absolute; inset: 0; opacity: var(--damage-flash); background: radial-gradient(circle, transparent 30%, rgba(170,22,11,.74) 100%); mix-blend-mode: screen; transition: opacity .13s; }
-.vignette { position: absolute; inset: 0; background: radial-gradient(circle at center, transparent 44%, rgba(2,6,7,.23) 82%, rgba(1,4,5,.55) 100%); }
+.vignette { position: absolute; inset: 0; overflow: hidden; background: radial-gradient(circle at center, transparent 43%, rgba(2,6,7,.18) 79%, rgba(1,4,5,.52) 100%); }
+.vignette::before { content: ""; position: absolute; inset: -12%; opacity: .22; background: radial-gradient(circle at 22% 19%, rgba(255,218,157,.4), transparent 10%), radial-gradient(circle at 28% 23%, rgba(255,154,82,.16), transparent 2%), linear-gradient(114deg, transparent 22%, rgba(255,216,166,.08) 33%, transparent 46%); mix-blend-mode: screen; }
+.vignette::after { content: ""; position: absolute; inset: 0; opacity: .045; background-image: repeating-radial-gradient(circle at 33% 47%, transparent 0, rgba(255,255,255,.55) .6px, transparent 1.2px, transparent 3px); background-size: 5px 5px; mix-blend-mode: soft-light; }
 
 .match-header { position: absolute; top: 0; left: 50%; display: flex; align-items: flex-start; transform: translateX(-50%); }
 .team-panel { position: relative; width: 205px; height: 60px; display: grid; grid-template-columns: 1fr 46px; grid-template-rows: 30px 18px; align-items: center; padding: 6px 14px; background: rgba(8,15,17,.82); border-bottom: 2px solid; backdrop-filter: blur(12px); }
