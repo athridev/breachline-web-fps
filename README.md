@@ -9,7 +9,11 @@ An original, full-screen tactical first-person shooter that runs entirely in the
 - **E** plant or defuse, **B** buy menu, **Tab** scoreboard
 - **1/2** switch weapons, **4/5** throw frag or smoke
 
-The game includes a 5v5 bot match, side swap, first-to-seven scoring, five weapons, economy and armor, two bomb sites, grenades, minimap, kill feed, configurable difficulty, audio, touch controls, training mode, and locally saved career stats.
+The game includes a 5v5 bot match, side swap, first-to-seven scoring, an AKM rifle and 9mm pistol, economy and armor, two bomb sites, grenades, minimap, kill feed, configurable difficulty, audio, touch controls, training mode, and locally saved career stats.
+
+## Visual assets
+
+The first-person weapon geometry comes from Quaternius' CC0 Ultimate Guns Pack. The industrial sunset environment map comes from Poly Haven and is also CC0. Full source and license details are recorded in [`THIRD_PARTY_ASSETS.md`](./THIRD_PARTY_ASSETS.md).
 
 ## Develop
 

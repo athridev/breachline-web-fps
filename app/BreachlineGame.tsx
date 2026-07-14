@@ -7,6 +7,9 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 
 type Team = "attack" | "defend";
 type Phase = "briefing" | "buy" | "live" | "roundEnd" | "matchEnd";
@@ -74,11 +77,8 @@ type Weapon = {
 };
 
 const WEAPONS: Record<string, Weapon> = {
-  v9: { id: "v9", label: "V9 Sidearm", short: "V9", price: 0, damage: 29, fireRate: 0.22, magazine: 12, reserve: 48, reload: 1.35, spread: 0.012, auto: false, color: 0x2a3034, length: 0.46, category: "sidearm" },
-  kestrel: { id: "kestrel", label: "Kestrel SMG", short: "KSTRL", price: 1250, damage: 24, fireRate: 0.078, magazine: 30, reserve: 90, reload: 1.75, spread: 0.027, auto: true, color: 0x2c3335, length: 0.68, category: "primary" },
-  arclight: { id: "arclight", label: "Arclight Rifle", short: "ARCLT", price: 2700, damage: 37, fireRate: 0.105, magazine: 30, reserve: 90, reload: 2.15, spread: 0.015, auto: true, color: 0x343a3b, length: 0.88, category: "primary" },
-  breach: { id: "breach", label: "Breach-12", short: "BR-12", price: 1900, damage: 17, fireRate: 0.82, magazine: 7, reserve: 28, reload: 2.6, spread: 0.065, auto: false, pellets: 8, color: 0x313638, length: 0.82, category: "primary" },
-  spectre: { id: "spectre", label: "Spectre DMR", short: "SPCTR", price: 4200, damage: 92, fireRate: 0.9, magazine: 10, reserve: 30, reload: 2.75, spread: 0.003, auto: false, color: 0x1d2529, length: 1.05, category: "primary" },
+  v9: { id: "v9", label: "9mm Service Pistol", short: "9MM", price: 0, damage: 31, fireRate: 0.21, magazine: 12, reserve: 48, reload: 1.35, spread: 0.012, auto: false, color: 0x252a2c, length: 0.46, category: "sidearm" },
+  akm: { id: "akm", label: "AKM Rifle", short: "AKM", price: 2700, damage: 38, fireRate: 0.1, magazine: 30, reserve: 90, reload: 2.35, spread: 0.016, auto: true, color: 0x292b2a, length: 0.9, category: "primary" },
 };
 
 const BOT_NAMES = ["KITE", "NOVA", "MERC", "ZERO", "RUNE", "HELIOS", "VIPER", "ROOK", "MICA", "SOL"];
@@ -89,10 +89,10 @@ const initialSnapshot: Snapshot = {
   health: 100,
   armor: 0,
   money: 3200,
-  ammo: 30,
-  reserve: 90,
-  weapon: "Arclight Rifle",
-  weaponId: "arclight",
+  ammo: 12,
+  reserve: 48,
+  weapon: "9mm Service Pistol",
+  weaponId: "v9",
   roundTime: 105,
   phaseTime: 12,
   attackScore: 0,
@@ -213,6 +213,12 @@ export function BreachlineGame() {
     renderer.domElement.className = "game-canvas";
     renderer.domElement.setAttribute("aria-label", "Breachline first-person game view");
     mount.appendChild(renderer.domElement);
+    const lockPointer = () => {
+      try {
+        const pending = renderer.domElement.requestPointerLock?.();
+        if (pending instanceof Promise) void pending.catch(() => undefined);
+      } catch { /* Pointer lock is optional in embedded browsers. */ }
+    };
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x7893a1);
@@ -251,6 +257,22 @@ export function BreachlineGame() {
     const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(2.4, 24, 16), new THREE.MeshBasicMaterial({ color: 0xffe0a6, fog: false }));
     sunDisc.position.set(-64, 42, 48);
     scene.add(sunDisc);
+
+    let environmentMap: THREE.DataTexture | null = null;
+    const environmentUrl = new URL("./hdr/industrial-sunset-1k.hdr", window.location.href).href;
+    new HDRLoader().load(environmentUrl, (texture) => {
+      environmentMap = texture;
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      scene.environment = texture;
+      scene.environmentIntensity = 0.78;
+      scene.background = texture;
+      scene.backgroundBlurriness = 0.035;
+      scene.backgroundIntensity = 0.92;
+      scene.backgroundRotation.set(0, Math.PI * 0.18, 0);
+      scene.environmentRotation.set(0, Math.PI * 0.18, 0);
+      sky.visible = false;
+      sunDisc.visible = false;
+    });
 
     const hemi = new THREE.HemisphereLight(0xd9efff, 0x4b4034, 1.36);
     scene.add(hemi);
@@ -480,6 +502,8 @@ export function BreachlineGame() {
     gun.position.set(0.34, -0.34, -0.58);
     camera.add(gun);
     scene.add(camera);
+    let weaponId = "v9";
+    const weaponModels = new Map<string, THREE.Group>();
     let gunMeshes: THREE.Object3D[] = [];
     const buildGun = (weapon: Weapon) => {
       for (const child of gunMeshes) gun.remove(child);
@@ -488,72 +512,72 @@ export function BreachlineGame() {
       const polymer = new THREE.MeshStandardMaterial({ color: 0x171d1f, roughness: 0.62, metalness: 0.18 });
       const rubber = new THREE.MeshStandardMaterial({ color: 0x101415, roughness: 0.9, metalness: 0.02 });
       const accent = new THREE.MeshStandardMaterial({ color: 0xd45b22, roughness: 0.46, metalness: 0.52 });
-      const glass = new THREE.MeshPhysicalMaterial({ color: 0x243b43, emissive: 0x0d2c38, emissiveIntensity: 0.45, roughness: 0.05, metalness: 0.1, transmission: 0.22, transparent: true, opacity: 0.86 });
-      const glove = new THREE.MeshStandardMaterial({ color: 0x242b2a, roughness: 0.92, metalness: 0.02 });
+      const glove = new THREE.MeshPhysicalMaterial({ color: 0x181e1e, roughness: 0.78, metalness: 0.04, clearcoat: 0.08, clearcoatRoughness: 0.85 });
+      const sleeve = new THREE.MeshStandardMaterial({ color: 0x303a38, roughness: 0.94, metalness: 0.01 });
       const addPart = (mesh: THREE.Mesh) => { mesh.castShadow = true; gun.add(mesh); gunMeshes.push(mesh); return mesh; };
+      const addObject = (object: THREE.Object3D) => { gun.add(object); gunMeshes.push(object); return object; };
+      const model = weaponModels.get(weapon.id)?.clone(true);
 
-      const receiver = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.18, weapon.length * 0.58, 3, 0.025), metal));
-      receiver.position.set(0, 0.01, -weapon.length * 0.2);
-      const upper = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.07, weapon.length * 0.62, 2, 0.012), polymer));
-      upper.position.set(0, 0.115, -weapon.length * 0.34);
-      const handguard = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.088, weapon.length * 0.48, 12), polymer));
-      handguard.rotation.x = Math.PI / 2;
-      handguard.position.set(0, 0.012, -weapon.length * 0.72);
-      const barrel = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.023, weapon.length * 0.72, 12), metal));
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 0.02, -weapon.length * 1.05);
-      const muzzleBrake = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.11, 12), metal));
-      muzzleBrake.rotation.x = Math.PI / 2;
-      muzzleBrake.position.set(0, 0.02, -weapon.length * 1.39);
-      const grip = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.115, 0.29, 0.14, 2, 0.025), rubber));
-      grip.rotation.x = -0.24;
-      grip.position.set(0, -0.18, -0.05);
-      const magazine = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.13, weapon.id === "v9" ? 0.24 : 0.32, 0.16, 2, 0.02), polymer));
-      magazine.rotation.x = -0.15;
-      magazine.position.set(0, -0.2, -weapon.length * 0.34);
-      const rail = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.022, weapon.length * 0.55), metal));
-      rail.position.set(0, 0.16, -weapon.length * 0.34);
-      const stripe = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.205, 0.028, 0.15), accent));
-      stripe.position.set(0, 0.065, -weapon.length * 0.38);
+      if (model) {
+        model.rotation.y = Math.PI / 2;
+        model.scale.setScalar(weapon.id === "akm" ? 0.29 : 0.44);
+        model.position.set(0, weapon.id === "akm" ? -0.02 : -0.035, weapon.id === "akm" ? -0.08 : -0.03);
+        addObject(model);
+      } else {
+        const receiver = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.18, weapon.length * 0.58, 3, 0.025), metal));
+        receiver.position.set(0, 0.01, -weapon.length * 0.2);
+        const upper = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.07, weapon.length * 0.62, 2, 0.012), polymer));
+        upper.position.set(0, 0.115, -weapon.length * 0.34);
+        const handguard = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.088, weapon.length * 0.48, 12), polymer));
+        handguard.rotation.x = Math.PI / 2;
+        handguard.position.set(0, 0.012, -weapon.length * 0.72);
+        const barrel = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.023, weapon.length * 0.72, 12), metal));
+        barrel.rotation.x = Math.PI / 2;
+        barrel.position.set(0, 0.02, -weapon.length * 1.05);
+        const muzzleBrake = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.11, 12), metal));
+        muzzleBrake.rotation.x = Math.PI / 2;
+        muzzleBrake.position.set(0, 0.02, -weapon.length * 1.39);
+        const grip = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.115, 0.29, 0.14, 2, 0.025), rubber));
+        grip.rotation.x = -0.24;
+        grip.position.set(0, -0.18, -0.05);
+        const magazine = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.13, weapon.id === "v9" ? 0.24 : 0.32, 0.16, 2, 0.02), polymer));
+        magazine.rotation.x = -0.15;
+        magazine.position.set(0, -0.2, -weapon.length * 0.34);
+        const rail = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.022, weapon.length * 0.55), metal));
+        rail.position.set(0, 0.16, -weapon.length * 0.34);
+        const stripe = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.205, 0.028, 0.15), accent));
+        stripe.position.set(0, 0.065, -weapon.length * 0.38);
 
-      if (weapon.id !== "v9") {
-        const stock = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.24, 0.34, 3, 0.035), polymer));
-        stock.position.set(0, -0.02, weapon.length * 0.19);
-        const butt = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.19, 0.3, 0.075, 2, 0.025), rubber));
-        butt.position.set(0, -0.01, weapon.length * 0.38);
+        if (weapon.id !== "v9") {
+          const stock = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.24, 0.34, 3, 0.035), polymer));
+          stock.position.set(0, -0.02, weapon.length * 0.19);
+          const butt = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.19, 0.3, 0.075, 2, 0.025), rubber));
+          butt.position.set(0, -0.01, weapon.length * 0.38);
+        }
+
+        const rearSight = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.045), metal));
+        rearSight.position.set(0, 0.2, -0.02);
+        const frontSight = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.035), metal));
+        frontSight.position.set(0, 0.17, -weapon.length * 0.86);
       }
 
-      const rearSight = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.045), metal));
-      rearSight.position.set(0, 0.2, -0.02);
-      const frontSight = addPart(new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.035), metal));
-      frontSight.position.set(0, 0.17, -weapon.length * 0.86);
-
-      if (weapon.id === "spectre" || weapon.id === "arclight") {
-        const scope = addPart(new THREE.Mesh(new THREE.CylinderGeometry(weapon.id === "spectre" ? 0.085 : 0.06, weapon.id === "spectre" ? 0.095 : 0.065, weapon.id === "spectre" ? 0.38 : 0.22, 18), polymer));
-        scope.rotation.x = Math.PI / 2;
-        scope.position.set(0, 0.235, -weapon.length * 0.28);
-        const lens = addPart(new THREE.Mesh(new THREE.CircleGeometry(weapon.id === "spectre" ? 0.077 : 0.052, 18), glass));
-        lens.position.set(0, 0.235, -weapon.length * 0.49);
+      const rightHand = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.145, 0.19, 0.115, 4, 0.032), glove));
+      rightHand.rotation.set(-0.2, 0, -0.06);
+      rightHand.position.set(0.025, -0.21, -0.08);
+      const leftHand = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.13, 0.18, 4, 0.034), glove));
+      leftHand.rotation.set(0.14, 0, 0.08);
+      leftHand.position.set(-0.025, -0.075, -weapon.length * 0.82);
+      const rightForearm = addPart(new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 0.46, 8, 12), sleeve));
+      rightForearm.rotation.set(-0.68, 0, -0.16);
+      rightForearm.position.set(0.23, -0.55, 0.17);
+      for (let finger = 0; finger < 3; finger++) {
+        const rightFinger = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.026, 0.105, 0.065, 2, 0.012), glove));
+        rightFinger.rotation.x = -0.2;
+        rightFinger.position.set(-0.045 + finger * 0.045, -0.2, -0.145);
+        const leftFinger = addPart(new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.06, 0.12, 2, 0.012), glove));
+        leftFinger.rotation.x = 0.26;
+        leftFinger.position.set(-0.06 + finger * 0.055, -0.09, -weapon.length * 0.89);
       }
-      if (weapon.id === "breach") {
-        const pump = addPart(new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.28, 12), rubber));
-        pump.rotation.x = Math.PI / 2;
-        pump.position.set(0, -0.015, -weapon.length * 0.76);
-      }
-
-      const rightHand = addPart(new THREE.Mesh(new THREE.SphereGeometry(0.105, 14, 10), glove));
-      rightHand.scale.set(0.9, 1.2, 1.05);
-      rightHand.position.set(0.04, -0.27, -0.02);
-      const leftHand = addPart(new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), glove));
-      leftHand.scale.set(1.05, 0.85, 1.25);
-      leftHand.position.set(-0.04, -0.11, -weapon.length * 0.68);
-      const rightForearm = addPart(new THREE.Mesh(new THREE.CapsuleGeometry(0.095, 0.42, 6, 10), glove));
-      rightForearm.rotation.x = -0.72;
-      rightForearm.position.set(0.09, -0.52, 0.12);
-      const leftForearm = addPart(new THREE.Mesh(new THREE.CapsuleGeometry(0.1, 0.44, 6, 10), glove));
-      leftForearm.rotation.x = -1.04;
-      leftForearm.rotation.z = 0.12;
-      leftForearm.position.set(-0.22, -0.38, -weapon.length * 0.35);
 
       muzzle.position.set(0, 0.02, -weapon.length * 1.48);
     };
@@ -561,6 +585,50 @@ export function BreachlineGame() {
     const muzzle = new THREE.PointLight(0xff9a52, 0, 4, 2);
     muzzle.position.set(0, 0.04, -1);
     gun.add(muzzle);
+
+    const modelBase = new URL("./models/quaternius/", window.location.href).href;
+    const upgradeWeaponMaterials = (object: THREE.Group) => {
+      object.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+        const upgraded = sourceMaterials.map((source) => {
+          const name = source.name.toLowerCase();
+          const isWood = name.includes("wood");
+          const isMetal = name.includes("metal");
+          const color = "color" in source && source.color instanceof THREE.Color ? source.color.clone() : new THREE.Color(0x292b2a);
+          if (isWood) color.multiplyScalar(2.45);
+          else color.multiplyScalar(isMetal ? 1.85 : 1.55);
+          return new THREE.MeshPhysicalMaterial({
+            name: source.name,
+            color,
+            roughness: isWood ? 0.5 : isMetal ? 0.3 : 0.68,
+            metalness: isWood ? 0.04 : isMetal ? 0.84 : 0.24,
+            clearcoat: isWood ? 0.28 : 0.08,
+            clearcoatRoughness: isWood ? 0.38 : 0.5,
+          });
+        });
+        child.material = Array.isArray(child.material) ? upgraded : upgraded[0];
+        child.castShadow = true;
+        child.receiveShadow = true;
+      });
+      return object;
+    };
+    const loadWeaponModel = (id: "akm" | "v9", filename: string) => {
+      const materialLoader = new MTLLoader();
+      materialLoader.setPath(modelBase);
+      materialLoader.load(`${filename}.mtl`, (materials) => {
+        materials.preload();
+        const objectLoader = new OBJLoader();
+        objectLoader.setMaterials(materials);
+        objectLoader.setPath(modelBase);
+        objectLoader.load(`${filename}.obj`, (object) => {
+          weaponModels.set(id, upgradeWeaponMaterials(object));
+          if (weaponId === id) buildGun(WEAPONS[id]);
+        });
+      });
+    };
+    loadWeaponModel("akm", "AssaultRifle_2");
+    loadWeaponModel("v9", "Pistol_1");
 
     const audio = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     const sound = (kind: "shot" | "hit" | "step" | "plant" | "explode" | "empty") => {
@@ -710,7 +778,6 @@ export function BreachlineGame() {
     let roundTime = 105;
     let roundMessage = "";
     let roundEndQueued = false;
-    let weaponId = "v9";
     let primaryId: string | null = null;
     let ammo: Record<string, { clip: number; reserve: number }> = { v9: { clip: 12, reserve: 48 } };
     let reloadingUntil = 0;
@@ -926,7 +993,7 @@ export function BreachlineGame() {
         playerAlive = false;
         playerDeaths += 1;
         attacker.kills += 1;
-        addFeed(attacker.name, "YOU", "KSTRL");
+        addFeed(attacker.name, "YOU", "AKM");
         if (playerCarryingBomb) {
           playerCarryingBomb = false;
           const nextCarrier = bots.find((b) => b.team === "attack" && b.alive);
@@ -958,7 +1025,7 @@ export function BreachlineGame() {
       if (!weapon.auto) firing = false;
       mag.clip -= 1;
       nextShotAt = now + weapon.fireRate;
-      recoil = Math.min(0.16, recoil + (weapon.id === "spectre" ? 0.09 : 0.035));
+      recoil = Math.min(0.16, recoil + (weapon.id === "akm" ? 0.042 : 0.032));
       pitch = clamp(pitch + weapon.spread * 0.75, -1.2, 1.2);
       muzzle.intensity = 14;
       window.setTimeout(() => { muzzle.intensity = 0; }, 38);
@@ -1126,7 +1193,7 @@ export function BreachlineGame() {
             const hitChance = clamp(bot.skill * (1 - distance / 70), 0.16, 0.82);
             if (Math.random() < hitChance) {
               if (target.player) damagePlayer(9 + Math.random() * 13, bot);
-              else if (target.bot) damageBot(target.bot, 11 + Math.random() * 15, bot.name, "KSTRL", bot.team);
+              else if (target.bot) damageBot(target.bot, 11 + Math.random() * 15, bot.name, "AKM", bot.team);
             }
           }
           continue;
@@ -1217,7 +1284,7 @@ export function BreachlineGame() {
 
     const updatePlayer = (dt: number) => {
       if (!screenActive) return;
-      const targetFov = aiming ? (weaponId === "spectre" ? 34 : 62) : settingsRef.current.fov;
+      const targetFov = aiming ? (weaponId === "akm" ? 58 : 64) : settingsRef.current.fov;
       camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 8);
       camera.updateProjectionMatrix();
       if (!playerAlive || phase === "roundEnd" || phase === "matchEnd") return;
@@ -1290,7 +1357,6 @@ export function BreachlineGame() {
           if (buyOpen) {
             buyOpen = false;
             setShowBuy(false);
-            renderer.domElement.requestPointerLock?.();
           }
         }
       } else if (phase === "live") {
@@ -1328,7 +1394,7 @@ export function BreachlineGame() {
     const onMouseDown = (event: MouseEvent) => {
       if (!screenActive) return;
       if (document.pointerLockElement !== renderer.domElement) {
-        renderer.domElement.requestPointerLock?.();
+        lockPointer();
         audio.resume();
         return;
       }
@@ -1352,7 +1418,7 @@ export function BreachlineGame() {
         if (buyOpen) {
           intentionalUnlock = true;
           document.exitPointerLock?.();
-        } else renderer.domElement.requestPointerLock?.();
+        }
       }
       if (event.code === "Escape" && screenActive) setPaused(true);
     };
@@ -1405,9 +1471,8 @@ export function BreachlineGame() {
         setDifficulty(selectedDifficulty);
         beginRound();
         audio.resume();
-        window.setTimeout(() => renderer.domElement.requestPointerLock?.(), 160);
       },
-      resume: () => { audio.resume(); renderer.domElement.requestPointerLock?.(); },
+      resume: () => { audio.resume(); lockPointer(); },
       buy,
       buyArmor,
       setWeapon: (slot) => equip(slot === 1 ? (primaryId ?? "v9") : "v9"),
@@ -1418,7 +1483,7 @@ export function BreachlineGame() {
         if (open) {
           intentionalUnlock = true;
           document.exitPointerLock?.();
-        } else renderer.domElement.requestPointerLock?.();
+        }
       },
       setTouch: (key, down) => {
         if (down) touchKeys.add(key); else touchKeys.delete(key);
@@ -1483,6 +1548,7 @@ export function BreachlineGame() {
       window.removeEventListener("resize", onResize);
       composer.dispose();
       renderer.dispose();
+      environmentMap?.dispose();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
@@ -1562,7 +1628,7 @@ export function BreachlineGame() {
               <button className="primary-action" onClick={() => startGame(false)}><span>DEPLOY</span><small>5V5 DEMOLITION · FOUNDRY</small></button>
               <button className="secondary-action" onClick={() => startGame(true)}><span>TRAINING RANGE</span><small>Unlimited economy · 4 targets</small></button>
             </div>
-            <div className="feature-line"><span>9 AI OPERATIVES</span><i /><span>5 WEAPONS</span><i /><span>2 OBJECTIVE SITES</span><i /><span>LOCAL CAREER</span></div>
+            <div className="feature-line"><span>9 AI OPERATIVES</span><i /><span>AKM + 9MM</span><i /><span>2 OBJECTIVE SITES</span><i /><span>LOCAL CAREER</span></div>
           </div>
           <footer className="menu-footer"><span>Original browser tactical FPS · Best with headphones</span><button onClick={() => setShowSettings(true)}>SETTINGS</button></footer>
         </section>
