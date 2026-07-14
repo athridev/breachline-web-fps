@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     title: "Breachline — Demolition Protocol",
     description: "Deploy into a complete browser-based 3D demolition match.",
     type: "website",
-    images: [{ url: "./og.png", width: 1792, height: 1024, alt: "Breachline tactical FPS key art" }],
+    images: [{ url: "./og.png", width: 1672, height: 941, alt: "Breachline tactical FPS key art" }],
   },
   twitter: { card: "summary_large_image", title: "Breachline", description: "An original modern tactical FPS for the browser.", images: ["./og.png"] },
 };
