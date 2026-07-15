@@ -18,6 +18,24 @@
 - Local license copy: `public/models/locarem/LICENSE.txt`
 - Usage: first-person 9mm pistol viewmodel
 
+## Karambit Knife
+
+- Creator: JoshAS
+- Source: https://opengameart.org/content/karambit-knife
+- Original file: `karambit3.blend`; converted file used: `karambit.glb`
+- License: Creative Commons Attribution 3.0
+- Local license copy: `public/models/joshas/LICENSE.txt`
+- Usage: first-person karambit viewmodel with ring-pivot inspection animation
+
+## Elite Soldier Model
+
+- Creators: hackcraft.de (`hc` on OpenGameArt), based on the CC-BY Police model by LeeZH
+- Source: https://opengameart.org/content/elite-soldier-model
+- Original files: `elite.obj`, `elite.mtl`, and the supplied texture maps; converted file used: `elite-soldier.glb`
+- License: Creative Commons Attribution 3.0
+- Local license copy: `public/models/joshas/LICENSE.txt`
+- Usage: masked, helmeted, textured bot body; arms were posed around the game weapon and the original MP5 mesh was removed
+
 ## Ultimate Guns Pack
 
 - Creator: Quaternius

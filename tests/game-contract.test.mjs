@@ -18,7 +18,15 @@ test("ships all requested combat modes and weapon controls", () => {
 test("keeps the first-person presentation weapon-only and correctly oriented", () => {
   assert.doesNotMatch(source, /makeHand|rightGrip|leftGrip/);
   assert.match(source, /object\.rotation\.x = Math\.PI \/ 2/);
-  assert.match(source, /new THREE\.ExtrudeGeometry\(bladeShape/);
+  assert.match(source, /models\/joshas\/karambit\.glb/);
+  assert.match(source, /new GLTFLoader\(\)\.load\(karambitUrl/);
+});
+
+test("uses textured masked tactical soldiers with a safe fallback", () => {
+  assert.match(source, /models\/joshas\/elite-soldier\.glb/);
+  assert.match(source, /soldierTemplate\.clone\(true\)/);
+  assert.match(source, /fallbackBody\.visible = false/);
+  assert.match(source, /soldierCosmetic/);
 });
 
 test("free-for-all remains fair and training remains reusable", () => {
@@ -50,4 +58,16 @@ test("bundles the licensed sandstone material set", async () => {
     const info = await stat(new URL(`../public/textures/polyhaven/${asset}`, import.meta.url));
     assert.ok(info.size > 100_000, `${asset} should contain a production texture`);
   }
+});
+
+test("bundles the attributed FPS karambit model", async () => {
+  const model = await stat(new URL("../public/models/joshas/karambit.glb", import.meta.url));
+  const soldier = await stat(new URL("../public/models/joshas/elite-soldier.glb", import.meta.url));
+  const license = await readFile(new URL("../public/models/joshas/LICENSE.txt", import.meta.url), "utf8");
+  assert.ok(model.size > 25_000, "karambit should contain the full converted mesh");
+  assert.ok(soldier.size > 700_000, "soldier should contain its complete textured mesh");
+  assert.match(license, /JoshAS/);
+  assert.match(license, /hackcraft\.de/);
+  assert.match(license, /LeeZH/);
+  assert.match(license, /CC BY 3\.0/);
 });

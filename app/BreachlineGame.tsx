@@ -9,6 +9,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 
 type Team = "attack" | "defend";
@@ -597,6 +598,15 @@ export function BreachlineGame() {
       const usesDetailedModel = Boolean(model?.userData.detailedViewmodel);
 
       if (weapon.id === "karambit") {
+        if (model) {
+          model.scale.setScalar(0.036);
+          model.position.set(0.015, 0.085, 0);
+          model.rotation.set(-0.08, 0.18, -0.15);
+          addObject(model);
+          muzzle.visible = false;
+          muzzleFlash.visible = false;
+          return;
+        }
         const knife = new THREE.Group();
         const bladeMaterial = new THREE.MeshPhysicalMaterial({ color: 0x9ca9ad, roughness: 0.16, metalness: 0.96, clearcoat: 0.28, clearcoatRoughness: 0.18, envMapIntensity: 1.65 });
         const gripMaterial = new THREE.MeshStandardMaterial({ color: 0x101718, roughness: 0.48, metalness: 0.34 });
@@ -805,6 +815,37 @@ export function BreachlineGame() {
       weaponModels.set("v9", wrapper);
       if (weaponId === "v9") buildGun(WEAPONS.v9);
     });
+    const karambitUrl = new URL("./models/joshas/karambit.glb", window.location.href).href;
+    new GLTFLoader().load(karambitUrl, ({ scene: knifeScene }) => {
+      const ringPivot = new THREE.Vector3(3.24, 0.3, -4.41);
+      knifeScene.position.sub(ringPivot);
+      knifeScene.rotation.x = -Math.PI / 2;
+      knifeScene.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        const upgraded = materials.map((source) => {
+          const blade = source.name === "BladeMetal";
+          const ring = source.name === "RingAccent";
+          return new THREE.MeshPhysicalMaterial({
+            name: source.name,
+            color: blade ? 0x4b7180 : ring ? 0xd65724 : 0x101718,
+            roughness: blade ? 0.14 : ring ? 0.24 : 0.42,
+            metalness: blade ? 0.98 : ring ? 0.9 : 0.38,
+            clearcoat: blade ? 0.34 : ring ? 0.26 : 0.08,
+            clearcoatRoughness: blade ? 0.16 : 0.24,
+            envMapIntensity: blade ? 1.9 : 1.3,
+          });
+        });
+        child.material = Array.isArray(child.material) ? upgraded : upgraded[0];
+        child.castShadow = true;
+        child.receiveShadow = true;
+      });
+      const wrapper = new THREE.Group();
+      wrapper.userData.detailedViewmodel = true;
+      wrapper.add(knifeScene);
+      weaponModels.set("karambit", wrapper);
+      if (weaponId === "karambit") buildGun(WEAPONS.karambit);
+    });
 
     const audio = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     const sound = (kind: "shot" | "hit" | "step" | "plant" | "explode" | "empty" | "slash") => {
@@ -830,70 +871,125 @@ export function BreachlineGame() {
     const createBotModel = (team: Team, id: string) => {
       const group = new THREE.Group();
       group.userData.botId = id;
-      const uniform = new THREE.MeshStandardMaterial({ color: team === "attack" ? 0x75402c : 0x294c55, roughness: 0.86, metalness: 0.04 });
-      const fabric = new THREE.MeshStandardMaterial({ color: 0x242a29, roughness: 0.94, metalness: 0.01 });
-      const armor = new THREE.MeshStandardMaterial({ color: 0x181e1f, roughness: 0.58, metalness: 0.34 });
-      const metal = new THREE.MeshStandardMaterial({ color: 0x252d2f, roughness: 0.29, metalness: 0.82 });
-      const skin = new THREE.MeshStandardMaterial({ color: 0x80634f, roughness: 0.92 });
-      const lens = new THREE.MeshPhysicalMaterial({ color: 0x1b3b44, emissive: 0x123039, emissiveIntensity: 0.24, metalness: 0.35, roughness: 0.08, transmission: 0.18, transparent: true, opacity: 0.9 });
+      const fallbackBody = new THREE.Group();
+      const uniform = new THREE.MeshStandardMaterial({ color: team === "attack" ? 0x624734 : 0x2b505c, roughness: 0.9, metalness: 0.02 });
+      const fabric = new THREE.MeshStandardMaterial({ color: 0x171d1c, roughness: 0.98, metalness: 0 });
+      const webbing = new THREE.MeshStandardMaterial({ color: 0x252b28, roughness: 0.88, metalness: 0.05 });
+      const armor = new THREE.MeshStandardMaterial({ color: 0x101617, roughness: 0.5, metalness: 0.42 });
+      const metal = new THREE.MeshStandardMaterial({ color: 0x252d2f, roughness: 0.27, metalness: 0.86 });
+      const skin = new THREE.MeshStandardMaterial({ color: 0x876852, roughness: 0.92 });
+      const lens = new THREE.MeshPhysicalMaterial({ color: 0x1a4b58, emissive: 0x0d2730, emissiveIntensity: 0.34, metalness: 0.48, roughness: 0.07, transmission: 0.16, transparent: true, opacity: 0.93, clearcoat: 0.5 });
+      const patch = new THREE.MeshStandardMaterial({ color: team === "attack" ? 0xdc682b : 0x42b8cf, roughness: 0.48, metalness: 0.24 });
 
-      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.48, 6, 12), uniform);
-      torso.scale.z = 0.72;
-      torso.position.y = 1.23;
+      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.16, 0.52, 12), uniform);
+      torso.scale.z = 0.64;
+      torso.position.y = 1.22;
       torso.userData.uniform = true;
-      const pelvis = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.27, 0.3, 2, 0.06), fabric);
-      pelvis.position.y = 0.82;
-      const vest = new THREE.Mesh(new RoundedBoxGeometry(0.63, 0.55, 0.39, 3, 0.055), armor);
-      vest.position.set(0, 1.29, -0.03);
-      const frontPlate = new THREE.Mesh(new RoundedBoxGeometry(0.43, 0.38, 0.075, 2, 0.025), armor);
-      frontPlate.position.set(0, 1.32, -0.22);
-      const backpack = new THREE.Mesh(new RoundedBoxGeometry(0.45, 0.55, 0.2, 2, 0.04), fabric);
-      backpack.position.set(0, 1.28, 0.25);
-      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.11, 0.16, 10), skin);
-      neck.position.y = 1.66;
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.205, 18, 14), skin);
-      head.scale.z = 0.9;
-      head.position.y = 1.83;
+      const abdomen = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.25, 10), uniform);
+      abdomen.scale.z = 0.66;
+      abdomen.position.y = 0.91;
+      abdomen.userData.uniform = true;
+      const pelvis = new THREE.Mesh(new RoundedBoxGeometry(0.36, 0.2, 0.24, 3, 0.045), fabric);
+      pelvis.position.y = 0.76;
+      const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.205, 0.17, 0.45, 12), armor);
+      vest.scale.z = 0.62;
+      vest.position.set(0, 1.23, -0.015);
+      const frontPlate = new THREE.Mesh(new RoundedBoxGeometry(0.29, 0.29, 0.035, 3, 0.012), armor);
+      frontPlate.position.set(0, 1.27, -0.145);
+      const belt = new THREE.Mesh(new RoundedBoxGeometry(0.37, 0.075, 0.25, 2, 0.015), webbing);
+      belt.position.set(0, 0.82, -0.01);
+      const backpack = new THREE.Mesh(new RoundedBoxGeometry(0.31, 0.4, 0.13, 3, 0.03), fabric);
+      backpack.position.set(0, 1.22, 0.18);
+
+      for (const [x, rotation] of [[-0.105, -0.22], [0.105, 0.22]] as const) {
+        const strap = new THREE.Mesh(new RoundedBoxGeometry(0.038, 0.43, 0.025, 2, 0.008), webbing);
+        strap.position.set(x, 1.26, -0.154);
+        strap.rotation.z = rotation;
+        fallbackBody.add(strap);
+      }
+      for (const x of [-0.125, 0, 0.125]) {
+        const pouch = new THREE.Mesh(new RoundedBoxGeometry(0.105, 0.13, 0.055, 2, 0.014), webbing);
+        pouch.position.set(x, 1.07, -0.17);
+        fallbackBody.add(pouch);
+      }
+
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.09, 0.13, 10), fabric);
+      neck.position.y = 1.56;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 20, 16), fabric);
+      head.scale.set(0.92, 1.12, 0.88);
+      head.position.y = 1.72;
       head.userData.part = "head";
-      const balaclava = new THREE.Mesh(new THREE.SphereGeometry(0.211, 18, 14, 0, Math.PI * 2, Math.PI * 0.32, Math.PI * 0.66), fabric);
-      balaclava.position.set(0, 1.82, -0.005);
-      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.232, 18, 9, 0, Math.PI * 2, 0, Math.PI * 0.57), armor);
-      helmet.scale.z = 1.04;
-      helmet.position.y = 1.88;
-      const helmetRail = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.022, 7, 18, Math.PI * 1.12), metal);
-      helmetRail.rotation.x = Math.PI / 2;
-      helmetRail.position.set(0, 1.89, -0.01);
-      const goggles = new THREE.Mesh(new RoundedBoxGeometry(0.3, 0.075, 0.035, 2, 0.016), lens);
-      goggles.position.set(0, 1.85, -0.193);
-      goggles.userData.part = "head";
+      const eyeOpening = new THREE.Mesh(new RoundedBoxGeometry(0.19, 0.058, 0.02, 3, 0.01), skin);
+      eyeOpening.position.set(0, 1.755, -0.13);
+      eyeOpening.userData.part = "head";
+      const maskPanel = new THREE.Mesh(new RoundedBoxGeometry(0.18, 0.095, 0.025, 3, 0.012), fabric);
+      maskPanel.position.set(0, 1.65, -0.125);
+      maskPanel.userData.part = "head";
+      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.165, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.58), armor);
+      helmet.scale.z = 1.03;
+      helmet.position.y = 1.79;
+      helmet.userData.part = "head";
+      const helmetBrim = new THREE.Mesh(new RoundedBoxGeometry(0.24, 0.032, 0.1, 2, 0.011), armor);
+      helmetBrim.position.set(0, 1.79, -0.09);
+      helmetBrim.userData.part = "head";
+      const gogglesFrame = new THREE.Mesh(new RoundedBoxGeometry(0.21, 0.064, 0.031, 3, 0.013), armor);
+      gogglesFrame.position.set(0, 1.76, -0.15);
+      gogglesFrame.userData.part = "head";
+      const lensA = new THREE.Mesh(new RoundedBoxGeometry(0.075, 0.04, 0.011, 3, 0.009), lens);
+      const lensB = lensA.clone();
+      lensA.position.set(-0.049, 1.76, -0.168);
+      lensB.position.set(0.049, 1.76, -0.168);
+      lensA.userData.part = "head";
+      lensB.userData.part = "head";
+      const headsetA = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.03, 12), armor);
+      const headsetB = headsetA.clone();
+      headsetA.rotation.z = Math.PI / 2;
+      headsetB.rotation.z = Math.PI / 2;
+      headsetA.position.set(-0.15, 1.69, 0);
+      headsetB.position.set(0.15, 1.69, 0);
 
-      const legA = new THREE.Mesh(new THREE.CapsuleGeometry(0.115, 0.45, 5, 9), fabric);
-      const legB = legA.clone();
-      legA.position.set(-0.15, 0.47, 0);
-      legB.position.set(0.15, 0.47, 0);
-      const bootA = new THREE.Mesh(new RoundedBoxGeometry(0.22, 0.16, 0.35, 2, 0.04), armor);
-      const bootB = bootA.clone();
-      bootA.position.set(-0.15, 0.11, -0.06);
-      bootB.position.set(0.15, 0.11, -0.06);
-      const kneeA = new THREE.Mesh(new RoundedBoxGeometry(0.18, 0.18, 0.08, 2, 0.025), armor);
-      const kneeB = kneeA.clone();
-      kneeA.position.set(-0.15, 0.5, -0.13);
-      kneeB.position.set(0.15, 0.5, -0.13);
+      const createLeg = (side: -1 | 1) => {
+        const limb = new THREE.Group();
+        limb.position.set(side * 0.11, 0.78, 0);
+        const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.071, 0.27, 5, 9), uniform);
+        thigh.position.y = -0.2;
+        thigh.userData.uniform = true;
+        const knee = new THREE.Mesh(new RoundedBoxGeometry(0.135, 0.13, 0.07, 2, 0.022), armor);
+        knee.position.set(0, -0.4, -0.075);
+        const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.064, 0.25, 5, 9), fabric);
+        shin.position.y = -0.58;
+        const boot = new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.13, 0.27, 3, 0.032), armor);
+        boot.position.set(0, -0.79, -0.05);
+        limb.add(thigh, knee, shin, boot);
+        return limb;
+      };
+      const legA = createLeg(-1);
+      const legB = createLeg(1);
 
-      const armA = new THREE.Mesh(new THREE.CapsuleGeometry(0.095, 0.43, 5, 9), uniform);
-      const armB = armA.clone();
-      armA.userData.uniform = true;
-      armB.userData.uniform = true;
-      armA.rotation.x = -0.82;
-      armB.rotation.x = -1.02;
-      armA.rotation.z = 0.2;
-      armB.rotation.z = -0.3;
-      armA.position.set(-0.34, 1.26, -0.16);
-      armB.position.set(0.34, 1.24, -0.21);
-      const handA = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), fabric);
-      const handB = handA.clone();
-      handA.position.set(-0.24, 1.09, -0.43);
-      handB.position.set(0.25, 1.12, -0.48);
+      const createArm = (side: -1 | 1) => {
+        const limb = new THREE.Group();
+        limb.position.set(side * 0.255, 1.43, -0.005);
+        const shoulder = new THREE.Mesh(new RoundedBoxGeometry(0.14, 0.14, 0.18, 3, 0.035), armor);
+        shoulder.position.y = -0.015;
+        const insignia = new THREE.Mesh(new RoundedBoxGeometry(0.018, 0.07, 0.075, 2, 0.008), patch);
+        insignia.position.set(side * 0.076, -0.02, -0.025);
+        const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.057, 0.2, 5, 9), uniform);
+        upper.position.y = -0.16;
+        upper.userData.uniform = true;
+        const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.061, 10, 8), fabric);
+        elbow.position.y = -0.33;
+        const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.19, 5, 9), fabric);
+        forearm.position.set(-side * 0.035, -0.43, -0.08);
+        forearm.rotation.x = 0.48;
+        const glove = new THREE.Mesh(new THREE.SphereGeometry(0.063, 10, 8), fabric);
+        glove.position.set(-side * 0.065, -0.55, -0.16);
+        limb.add(shoulder, insignia, upper, elbow, forearm, glove);
+        return limb;
+      };
+      const armA = createArm(-1);
+      const armB = createArm(1);
+      armA.rotation.set(-0.82, 0, 0.16);
+      armB.rotation.set(-1.02, 0, -0.24);
 
       const weaponMount = new THREE.Group();
       const weaponBody = new THREE.Mesh(new RoundedBoxGeometry(0.13, 0.14, 0.62, 2, 0.018), metal);
@@ -908,19 +1004,15 @@ export function BreachlineGame() {
       weaponMag.rotation.x = -0.18;
       weaponMag.position.set(0.09, 1.03, -0.48);
 
-      for (const x of [-0.19, 0, 0.19]) {
-        const pouch = new THREE.Mesh(new RoundedBoxGeometry(0.15, 0.17, 0.09, 2, 0.018), fabric);
-        pouch.position.set(x, 1.12, -0.26);
-        group.add(pouch);
-      }
-
       weaponMount.add(weaponBody, weaponBarrel, weaponStock, weaponMag);
       group.userData.weaponMount = weaponMount;
       group.userData.legA = legA;
       group.userData.legB = legB;
       group.userData.armA = armA;
       group.userData.armB = armB;
-      group.add(torso, pelvis, vest, frontPlate, backpack, neck, head, balaclava, helmet, helmetRail, goggles, legA, legB, bootA, bootB, kneeA, kneeB, armA, armB, handA, handB, weaponMount);
+      group.userData.fallbackBody = fallbackBody;
+      fallbackBody.add(torso, abdomen, pelvis, vest, frontPlate, belt, backpack, neck, head, eyeOpening, maskPanel, helmet, helmetBrim, gogglesFrame, lensA, lensB, headsetA, headsetB, legA, legB, armA, armB);
+      group.add(fallbackBody, weaponMount);
       group.traverse((child) => {
         child.userData.botId = id;
         if (child instanceof THREE.Mesh) {
@@ -960,6 +1052,55 @@ export function BreachlineGame() {
         respawnAt: 0,
       });
     }
+
+    const soldierUrl = new URL("./models/joshas/elite-soldier.glb", window.location.href).href;
+    new GLTFLoader().load(soldierUrl, ({ scene: soldierTemplate }) => {
+      bots.forEach((bot) => {
+        const oldCosmetic = bot.root.userData.soldierCosmetic as THREE.Group | undefined;
+        if (oldCosmetic) bot.root.remove(oldCosmetic);
+        const oldGear = bot.root.userData.soldierGear as THREE.Group | undefined;
+        if (oldGear) bot.root.remove(oldGear);
+        const soldier = soldierTemplate.clone(true);
+        soldier.rotation.y = Math.PI;
+        soldier.traverse((child) => {
+          child.userData.botId = bot.id;
+          const name = child.name.toLowerCase();
+          if (name.includes("head") || name.includes("face") || name.includes("hat") || name.includes("eye") || name.includes("pupil")) child.userData.part = "head";
+          if (!(child instanceof THREE.Mesh)) return;
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          const cloned = materials.map((source) => {
+            const material = source.clone() as THREE.MeshStandardMaterial;
+            material.roughness = name.includes("steel") ? 0.28 : name.includes("eye") ? 0.2 : 0.82;
+            material.metalness = name.includes("steel") ? 0.78 : 0.04;
+            material.envMapIntensity = name.includes("steel") ? 1.25 : 0.72;
+            return material;
+          });
+          child.material = Array.isArray(child.material) ? cloned : cloned[0];
+          child.userData.uniform = name === "arms" || name === "legs";
+          child.castShadow = true;
+          child.receiveShadow = true;
+        });
+        const fallbackBody = bot.root.userData.fallbackBody as THREE.Group;
+        fallbackBody.visible = false;
+        const gear = new THREE.Group();
+        const goggleFrame = new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.052, 0.024, 3, 0.01), new THREE.MeshStandardMaterial({ color: 0x0d1314, roughness: 0.38, metalness: 0.48 }));
+        const goggleLensMaterial = new THREE.MeshPhysicalMaterial({ color: 0x174c5c, emissive: 0x09262f, emissiveIntensity: 0.32, roughness: 0.06, metalness: 0.42, clearcoat: 0.5 });
+        const goggleA = new THREE.Mesh(new RoundedBoxGeometry(0.062, 0.032, 0.011, 3, 0.007), goggleLensMaterial);
+        const goggleB = goggleA.clone();
+        goggleFrame.position.set(0, 1.665, -0.147);
+        goggleA.position.set(-0.043, 1.665, -0.162);
+        goggleB.position.set(0.043, 1.665, -0.162);
+        gear.add(goggleFrame, goggleA, goggleB);
+        gear.traverse((child) => {
+          child.userData.botId = bot.id;
+          child.userData.part = "head";
+          if (child instanceof THREE.Mesh) child.castShadow = true;
+        });
+        bot.root.userData.soldierCosmetic = soldier;
+        bot.root.userData.soldierGear = gear;
+        bot.root.add(soldier, gear);
+      });
+    });
 
     let screenActive = false;
     let simulationPaused = true;
@@ -1147,8 +1288,8 @@ export function BreachlineGame() {
         bot.team = freeForAllMode ? (index % 2 === 0 ? "attack" : "defend") : index < 4 ? playerTeam : otherTeam(playerTeam);
         bot.root.traverse((child) => {
           if (child.userData.uniform && child instanceof THREE.Mesh) {
-            const ffaColor = new THREE.Color().setHSL((index * 0.127 + 0.02) % 1, 0.42, 0.38);
-            (child.material as THREE.MeshStandardMaterial).color.copy(freeForAllMode ? ffaColor : new THREE.Color(bot.team === "attack" ? 0xb3572f : 0x326a78));
+            const ffaColor = new THREE.Color().setHSL((index * 0.127 + 0.02) % 1, 0.26, 0.25);
+            (child.material as THREE.MeshStandardMaterial).color.copy(freeForAllMode ? ffaColor : new THREE.Color(bot.team === "attack" ? 0x65402f : 0x2d4e58));
           }
         });
         bot.health = 100;
@@ -1172,6 +1313,11 @@ export function BreachlineGame() {
         legB.rotation.set(0, 0, 0);
         armA.rotation.set(-0.82, 0, 0.2);
         armB.rotation.set(-1.02, 0, -0.3);
+        const cosmetic = bot.root.userData.soldierCosmetic as THREE.Group | undefined;
+        if (cosmetic) {
+          cosmetic.position.y = 0;
+          cosmetic.rotation.z = 0;
+        }
         bot.destination.copy(freeForAllMode ? nextFfaSpawn() : (index % 2 ? zoneA : zoneB));
       });
       if (trainingMode) {
@@ -1546,6 +1692,11 @@ export function BreachlineGame() {
           legB.rotation.set(0, 0, 0);
           armA.rotation.set(-0.82, 0, 0.2);
           armB.rotation.set(-1.02, 0, -0.3);
+          const cosmetic = bot.root.userData.soldierCosmetic as THREE.Group | undefined;
+          if (cosmetic) {
+            cosmetic.position.y = 0;
+            cosmetic.rotation.z = 0;
+          }
           continue;
         }
         bot.deathTime = Math.min(freeForAllMode ? 2.4 : 1.2, bot.deathTime + dt);
@@ -1582,6 +1733,8 @@ export function BreachlineGame() {
           const idle = Math.sin(performance.now() * 0.002 + Number(bot.id.split("-")[1])) * 0.035;
           armA.rotation.x = -0.82 + idle;
           armB.rotation.x = -1.02 - idle;
+          const cosmetic = bot.root.userData.soldierCosmetic as THREE.Group | undefined;
+          if (cosmetic) cosmetic.position.y = idle * 0.08;
           continue;
         }
         bot.fireCooldown -= dt;
@@ -1597,6 +1750,11 @@ export function BreachlineGame() {
           legB.rotation.x = THREE.MathUtils.lerp(legB.rotation.x, 0, dt * 8);
           armA.rotation.x = THREE.MathUtils.lerp(armA.rotation.x, -1.02, dt * 7);
           armB.rotation.x = THREE.MathUtils.lerp(armB.rotation.x, -1.16, dt * 7);
+          const cosmetic = bot.root.userData.soldierCosmetic as THREE.Group | undefined;
+          if (cosmetic) {
+            cosmetic.position.y = THREE.MathUtils.lerp(cosmetic.position.y, 0, dt * 9);
+            cosmetic.rotation.z = THREE.MathUtils.lerp(cosmetic.rotation.z, 0, dt * 9);
+          }
           if (bot.fireCooldown <= 0) {
             bot.fireCooldown = 0.18 + (1 - bot.skill) * 0.35 + Math.random() * 0.12;
             const distance = bot.root.position.distanceTo(target.position);
@@ -1661,6 +1819,11 @@ export function BreachlineGame() {
         legB.rotation.x = -stride;
         armA.rotation.x = -0.82 - stride * 0.16;
         armB.rotation.x = -1.02 + stride * 0.12;
+        const cosmetic = bot.root.userData.soldierCosmetic as THREE.Group | undefined;
+        if (cosmetic) {
+          cosmetic.position.y = Math.abs(stride) * 0.045;
+          cosmetic.rotation.z = stride * 0.022;
+        }
       }
     };
 
@@ -2181,7 +2344,7 @@ export function BreachlineGame() {
           <div className="menu-art" style={{ backgroundImage: "url('./menu-hero.png')" }} />
           <div className="menu-shade" />
           <header className="menu-topbar">
-            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.2 · DUSTLINE</small></div>
+            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.3 · DUSTLINE</small></div>
             <div className="career-strip"><span>CAREER</span><strong>{stats.wins}W</strong><span>{stats.matches} MATCHES</span><span>{stats.eliminations} ELIMS</span></div>
           </header>
           <div className="menu-content">

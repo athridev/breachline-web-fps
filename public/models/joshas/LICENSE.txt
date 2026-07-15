@@ -1,0 +1,27 @@
+Karambit Knife by JoshAS
+
+Source: https://opengameart.org/content/karambit-knife
+Creator profile: https://opengameart.org/users/joshas
+
+Original asset: karambit3.blend
+Browser conversion used by Breachline: karambit.glb
+
+Licensed under the Creative Commons Attribution 3.0 Unported license (CC BY 3.0):
+https://creativecommons.org/licenses/by/3.0/
+
+The geometry was converted to glTF and split into blade, grip, and ring material regions for this project. No Counter-Strike model or texture data is included.
+
+---
+
+Elite Soldier Model by hackcraft.de (hc), based on the Police model by LeeZH
+
+Source: https://opengameart.org/content/elite-soldier-model
+Original Police source: https://opengameart.org/content/policeblend
+
+Original assets: elite.obj, elite.mtl, supplied textures, and related source files
+Browser conversion used by Breachline: elite-soldier.glb
+
+Licensed under the Creative Commons Attribution 3.0 Unported license (CC BY 3.0):
+https://creativecommons.org/licenses/by/3.0/
+
+The source model's arms were posed around the Breachline weapon mount and its original MP5 mesh was removed. All original camouflage, mask, helmet, vest, pouch, and equipment textures remain attributed to the creators above.
