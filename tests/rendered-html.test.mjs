@@ -17,9 +17,11 @@ test("server-renders the Breachline game shell", async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /<title>Breachline — Demolition Protocol<\/title>/i);
+  assert.match(html, /<title>Breachline — Dustline Protocol<\/title>/i);
   assert.match(html, /BREACHLINE/);
-  assert.match(html, /DEPLOY/);
-  assert.match(html, /5V5 DEMOLITION/);
+  assert.match(html, /DEMOLITION/);
+  assert.match(html, /FREE FOR ALL/);
+  assert.match(html, /20 BOTS/);
+  assert.match(html, /KARAMBIT/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });

@@ -14,6 +14,7 @@ import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
 type Team = "attack" | "defend";
 type Phase = "briefing" | "buy" | "live" | "roundEnd" | "matchEnd";
 type Difficulty = "recruit" | "veteran" | "elite";
+type GameMode = "demolition" | "training" | "ffa";
 
 type Settings = {
   sensitivity: number;
@@ -27,6 +28,7 @@ type FeedItem = { id: number; killer: string; victim: string; weapon: string; fr
 type PlayerRow = { name: string; team: Team; kills: number; deaths: number; alive: boolean; isPlayer?: boolean };
 
 type Snapshot = {
+  gameMode: GameMode;
   phase: Phase;
   team: Team;
   health: number;
@@ -73,17 +75,19 @@ type Weapon = {
   pellets?: number;
   color: number;
   length: number;
-  category: "primary" | "sidearm";
+  category: "primary" | "sidearm" | "melee";
 };
 
 const WEAPONS: Record<string, Weapon> = {
   v9: { id: "v9", label: "9mm Service Pistol", short: "9MM", price: 0, damage: 31, fireRate: 0.21, magazine: 12, reserve: 48, reload: 1.35, spread: 0.012, auto: false, color: 0x252a2c, length: 0.46, category: "sidearm" },
   akm: { id: "akm", label: "AKM Rifle", short: "AKM", price: 2700, damage: 38, fireRate: 0.1, magazine: 30, reserve: 90, reload: 2.35, spread: 0.016, auto: true, color: 0x292b2a, length: 0.9, category: "primary" },
+  karambit: { id: "karambit", label: "Karambit Knife", short: "KNIFE", price: 0, damage: 58, fireRate: 0.48, magazine: 1, reserve: 0, reload: 0, spread: 0, auto: false, color: 0x111719, length: 0.48, category: "melee" },
 };
 
-const BOT_NAMES = ["KITE", "NOVA", "MERC", "ZERO", "RUNE", "HELIOS", "VIPER", "ROOK", "MICA", "SOL"];
+const BOT_NAMES = ["KITE", "NOVA", "MERC", "ZERO", "RUNE", "HELIOS", "VIPER", "ROOK", "MICA", "SOL", "EMBER", "ATLAS", "SHADE", "ECHO", "ORBIT", "ONYX", "FROST", "KNOX", "BLADE", "SABLE"];
 
 const initialSnapshot: Snapshot = {
+  gameMode: "demolition",
   phase: "briefing",
   team: "attack",
   health: 100,
@@ -116,11 +120,11 @@ const initialSnapshot: Snapshot = {
 };
 
 type EngineApi = {
-  start: (difficulty: Difficulty, training: boolean) => void;
+  start: (difficulty: Difficulty, mode: GameMode) => void;
   resume: () => void;
   buy: (id: string) => boolean;
   buyArmor: () => boolean;
-  setWeapon: (slot: 1 | 2) => void;
+  setWeapon: (slot: 1 | 2 | 3) => void;
   throwGrenade: (kind: "frag" | "smoke") => void;
   setBuyMenu: (open: boolean) => void;
   setTouch: (key: string, down: boolean) => void;
@@ -148,6 +152,7 @@ type Bot = {
   deathStartQuaternion: THREE.Quaternion;
   deathTargetQuaternion: THREE.Quaternion;
   deathDrift: THREE.Vector3;
+  respawnAt: number;
 };
 
 type Obstacle = { x: number; z: number; w: number; d: number; height: number; mesh: THREE.Mesh };
@@ -226,8 +231,8 @@ export function BreachlineGame() {
     };
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x7893a1);
-    scene.fog = new THREE.FogExp2(0x83939a, 0.0072);
+    scene.background = new THREE.Color(0x8eb5cf);
+    scene.fog = new THREE.FogExp2(0xd2c09d, 0.0046);
 
     const camera = new THREE.PerspectiveCamera(settingsRef.current.fov, mount.clientWidth / mount.clientHeight, 0.05, 180);
     camera.rotation.order = "YXZ";
@@ -247,9 +252,9 @@ export function BreachlineGame() {
         side: THREE.BackSide,
         depthWrite: false,
         uniforms: {
-          topColor: { value: new THREE.Color(0x527486) },
-          horizonColor: { value: new THREE.Color(0xe8c394) },
-          bottomColor: { value: new THREE.Color(0x9d8b72) },
+          topColor: { value: new THREE.Color(0x4f90bc) },
+          horizonColor: { value: new THREE.Color(0xf2d6a5) },
+          bottomColor: { value: new THREE.Color(0xc39a67) },
           offset: { value: 10 },
           exponent: { value: 0.72 },
         },
@@ -269,14 +274,8 @@ export function BreachlineGame() {
       environmentMap = texture;
       texture.mapping = THREE.EquirectangularReflectionMapping;
       scene.environment = texture;
-      scene.environmentIntensity = 0.92;
-      scene.background = texture;
-      scene.backgroundBlurriness = 0.035;
-      scene.backgroundIntensity = 0.52;
-      scene.backgroundRotation.set(0, Math.PI * 0.18, 0);
+      scene.environmentIntensity = 0.72;
       scene.environmentRotation.set(0, Math.PI * 0.18, 0);
-      sky.visible = false;
-      sunDisc.visible = false;
     });
 
     const hemi = new THREE.HemisphereLight(0xd9efff, 0x4b4034, 0.88);
@@ -307,15 +306,17 @@ export function BreachlineGame() {
       texture.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       return texture;
     };
-    const groundTexture = tiledTexture("ground-v2.avif", 11, 11);
-    const groundBump = tiledTexture("ground-v2.avif", 11, 11, false);
-    const concreteTexture = tiledTexture("concrete-real-v3.webp", 2.6, 2.6);
-    const concreteBump = tiledTexture("concrete-real-v3.webp", 2.6, 2.6, false);
+    const groundTexture = tiledTexture("polyhaven/red_sandstone_pavement_diff_1k.jpg", 14, 14);
+    const groundNormal = tiledTexture("polyhaven/red_sandstone_pavement_nor_gl_1k.jpg", 14, 14, false);
+    const groundRough = tiledTexture("polyhaven/red_sandstone_pavement_rough_1k.jpg", 14, 14, false);
+    const concreteTexture = tiledTexture("polyhaven/old_sandstone_02_diff_1k.jpg", 2.3, 2.3);
+    const concreteNormal = tiledTexture("polyhaven/old_sandstone_02_nor_gl_1k.jpg", 2.3, 2.3, false);
+    const concreteRough = tiledTexture("polyhaven/old_sandstone_02_rough_1k.jpg", 2.3, 2.3, false);
     const metalTexture = tiledTexture("metal-v2.avif", 1.5, 1.25);
     const metalBump = tiledTexture("metal-v2.avif", 1.5, 1.25, false);
 
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xb2aa9d, map: groundTexture, bumpMap: groundBump, bumpScale: 0.16, roughness: 0.91, metalness: 0.04 });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(72, 72, 16, 16), floorMat);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xc9b08b, map: groundTexture, normalMap: groundNormal, roughnessMap: groundRough, roughness: 0.96, metalness: 0.01 });
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(84, 84, 20, 20), floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
@@ -336,8 +337,10 @@ export function BreachlineGame() {
       const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(color).lerp(new THREE.Color(isMetal ? 0xb9b9b2 : 0xd7d2c8), 0.68),
         map: isMetal ? metalTexture : concreteTexture,
-        bumpMap: isMetal ? metalBump : concreteBump,
-        bumpScale: isMetal ? 0.09 : 0.12,
+        bumpMap: isMetal ? metalBump : undefined,
+        normalMap: isMetal ? undefined : concreteNormal,
+        roughnessMap: isMetal ? undefined : concreteRough,
+        bumpScale: isMetal ? 0.09 : 0,
         roughness: isMetal ? 0.48 : 0.86,
         metalness: isMetal ? 0.68 : 0.05,
       });
@@ -352,26 +355,83 @@ export function BreachlineGame() {
       return mesh;
     };
 
-    addBox(0, -35, 72, 2, 5, 0x4d514f);
-    addBox(0, 35, 72, 2, 5, 0x4d514f);
-    addBox(-35, 0, 2, 72, 5, 0x4d514f);
-    addBox(35, 0, 2, 72, 5, 0x4d514f);
-    addBox(-18, 5, 10, 5, 4.5, 0x5a5e5c);
-    addBox(-17, -17, 7, 6, 3.8, 0x6b665b);
-    addBox(17, 16, 9, 5, 4.8, 0x565c5b);
-    addBox(18, -7, 7, 7, 4.2, 0x67645c);
-    addBox(0, 6, 4, 15, 3.5, 0x555c5c);
-    addBox(2, -17, 4, 11, 3.5, 0x555c5c);
-    addBox(-6, 23, 12, 3, 2.8, 0x6b5a48);
-    addBox(8, 24, 7, 3, 2.8, 0x4d5960, 0.7);
-    addBox(-7, -27, 9, 3, 2.8, 0x4d5960, 0.7);
-    addBox(12, -26, 11, 3, 2.8, 0x6b5a48);
-    addBox(-27, -3, 3, 10, 3.2, 0x6b5a48);
-    addBox(28, 3, 3, 11, 3.2, 0x4d5960, 0.7);
-    addBox(-10, -5, 3.2, 3.2, 2.1, 0x9b693b, 0.55);
-    addBox(10, 7, 3.2, 3.2, 2.1, 0x9b693b, 0.55);
-    addBox(-1, 27, 2.8, 2.8, 1.9, 0x715c40, 0.35);
-    addBox(2, -29, 2.8, 2.8, 1.9, 0x715c40, 0.35);
+    // Original three-lane desert arena: long lane, central doors, tunnels, and two courtyard sites.
+    addBox(0, -41, 84, 2, 7, 0x9d794e);
+    addBox(0, 41, 84, 2, 7, 0x9d794e);
+    addBox(-41, 0, 2, 84, 7, 0x9d794e);
+    addBox(41, 0, 2, 84, 7, 0x9d794e);
+    addBox(-29, 24, 18, 6, 5.8, 0xa98258);
+    addBox(-28, 10, 11, 4, 4.8, 0xb08c62);
+    addBox(-31, -5, 12, 5, 5.5, 0x9f7a51);
+    addBox(-31, -31, 18, 7, 6.5, 0x9a7248);
+    addBox(29, 24, 18, 6, 5.8, 0xa98258);
+    addBox(29, 10, 11, 4, 4.8, 0xb08c62);
+    addBox(31, -5, 12, 5, 5.5, 0x9f7a51);
+    addBox(31, -31, 18, 7, 6.5, 0x9a7248);
+    addBox(-9, 19, 5, 18, 5.5, 0xaa845a);
+    addBox(9, 17, 5, 14, 5.5, 0xaa845a);
+    addBox(-9, -8, 5, 13, 5.5, 0xa37b50);
+    addBox(9, -11, 5, 18, 5.5, 0xa37b50);
+    addBox(-5.2, -28, 3, 4, 4.5, 0x967149);
+    addBox(5.2, -28, 3, 4, 4.5, 0x967149);
+    addBox(-22, -18, 8, 3, 3.4, 0xaa845a);
+    addBox(22, -18, 8, 3, 3.4, 0xaa845a);
+    addBox(-18, 31, 9, 3, 3.2, 0x9f7b55);
+    addBox(18, 31, 9, 3, 3.2, 0x9f7b55);
+    addBox(-27, -23, 3.2, 3.2, 2.1, 0x795333, 0.55);
+    addBox(-22.8, -26, 3.2, 3.2, 2.1, 0x795333, 0.55);
+    addBox(27, -23, 3.2, 3.2, 2.1, 0x795333, 0.55);
+    addBox(22.8, -26, 3.2, 3.2, 2.1, 0x795333, 0.55);
+
+    const sandstoneDetail = new THREE.MeshStandardMaterial({ color: 0xc6a77c, map: concreteTexture, normalMap: concreteNormal, roughnessMap: concreteRough, roughness: 0.92 });
+    const darkWood = new THREE.MeshStandardMaterial({ color: 0x3b281b, roughness: 0.72, metalness: 0.04 });
+    const addArchway = (x: number, z: number, rotation = 0, width = 4.2) => {
+      const arch = new THREE.Group();
+      const pillarGeometry = new RoundedBoxGeometry(0.58, 3.5, 0.78, 2, 0.08);
+      for (const side of [-1, 1]) {
+        const pillar = new THREE.Mesh(pillarGeometry, sandstoneDetail);
+        pillar.position.set(side * width * 0.48, 1.75, 0);
+        pillar.castShadow = pillar.receiveShadow = true;
+        arch.add(pillar);
+      }
+      const lintel = new THREE.Mesh(new RoundedBoxGeometry(width + 0.65, 0.62, 0.86, 3, 0.12), sandstoneDetail);
+      lintel.position.y = 3.28;
+      lintel.castShadow = lintel.receiveShadow = true;
+      arch.add(lintel);
+      const trim = new THREE.Mesh(new THREE.TorusGeometry(width * 0.31, 0.16, 8, 28, Math.PI), sandstoneDetail);
+      trim.position.set(0, 2.72, -0.44);
+      trim.rotation.z = 0;
+      arch.add(trim);
+      arch.position.set(x, 0, z);
+      arch.rotation.y = rotation;
+      arch.traverse((child) => { if (child instanceof THREE.Mesh) obstacleMeshes.push(child); });
+      scene.add(arch);
+    };
+    addArchway(0, -28, 0, 6.2);
+    addArchway(-18, 3, Math.PI / 2, 3.7);
+    addArchway(18, 3, Math.PI / 2, 3.7);
+    addArchway(0, 8, 0, 4.4);
+
+    const addDoubleDoor = (x: number, z: number, rotation: number) => {
+      const doors = new THREE.Group();
+      for (const side of [-1, 1]) {
+        const door = new THREE.Mesh(new RoundedBoxGeometry(1.35, 3.1, 0.18, 2, 0.035), darkWood);
+        door.position.set(side * 1.48, 1.55, 0);
+        door.rotation.y = side * 0.3;
+        door.castShadow = true;
+        doors.add(door);
+        for (const y of [0.65, 1.55, 2.45]) {
+          const brace = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.09, 0.08), new THREE.MeshStandardMaterial({ color: 0x1f2020, metalness: 0.78, roughness: 0.38 }));
+          brace.position.set(side * 1.48, y, -0.13);
+          doors.add(brace);
+        }
+      }
+      doors.position.set(x, 0, z);
+      doors.rotation.y = rotation;
+      scene.add(doors);
+    };
+    addDoubleDoor(0, -27.35, 0);
+    addDoubleDoor(0, 8.1, 0);
 
     const beamMaterial = new THREE.MeshStandardMaterial({ color: 0x656d6c, map: metalTexture, bumpMap: metalBump, bumpScale: 0.07, metalness: 0.78, roughness: 0.38 });
     for (const z of [-12, 13]) {
@@ -422,7 +482,7 @@ export function BreachlineGame() {
     addPipe(31.2, 3.3, 8, 12, "z");
     addPipe(-31.2, 3.8, -10, 14, "z");
 
-    const crateMaterial = new THREE.MeshStandardMaterial({ color: 0x9d8c72, map: concreteTexture, bumpMap: concreteBump, bumpScale: 0.08, roughness: 0.84, metalness: 0.04 });
+    const crateMaterial = new THREE.MeshStandardMaterial({ color: 0xa8875c, map: concreteTexture, normalMap: concreteNormal, roughnessMap: concreteRough, roughness: 0.9, metalness: 0.02 });
     for (const [x, z, rotation] of [[-21, 14, 0.1], [-22.4, 14.5, -0.2], [22, -17, 0.14], [13, 10, -0.1], [-12, -11, 0.2]] as number[][]) {
       const pallet = new THREE.Group();
       for (let i = 0; i < 3; i++) {
@@ -489,8 +549,8 @@ export function BreachlineGame() {
       scene.add(bulb);
     }
 
-    const zoneA = new THREE.Vector3(-24, 0, -23);
-    const zoneB = new THREE.Vector3(24, 0, 22);
+    const zoneA = new THREE.Vector3(-27, 0, -24);
+    const zoneB = new THREE.Vector3(27, 0, -24);
     const addZone = (position: THREE.Vector3, color: number) => {
       const ring = new THREE.Mesh(new THREE.RingGeometry(2.7, 3.15, 48), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, side: THREE.DoubleSide }));
       ring.rotation.x = -Math.PI / 2;
@@ -528,23 +588,41 @@ export function BreachlineGame() {
       const polymer = new THREE.MeshStandardMaterial({ color: 0x171d1f, roughness: 0.62, metalness: 0.18 });
       const rubber = new THREE.MeshStandardMaterial({ color: 0x101415, roughness: 0.9, metalness: 0.02 });
       const accent = new THREE.MeshStandardMaterial({ color: 0xd45b22, roughness: 0.46, metalness: 0.52 });
-      const glove = new THREE.MeshPhysicalMaterial({ color: 0x242c2d, roughness: 0.72, metalness: 0.03, clearcoat: 0.08, clearcoatRoughness: 0.82 });
-      const glovePad = new THREE.MeshStandardMaterial({ color: 0x111718, roughness: 0.84, metalness: 0.02 });
-      const sleeve = new THREE.MeshStandardMaterial({ color: 0x26302f, roughness: 0.96, metalness: 0.01 });
       const addPart = (mesh: THREE.Mesh) => { mesh.castShadow = true; gun.add(mesh); gunMeshes.push(mesh); return mesh; };
       const addObject = (object: THREE.Object3D) => { gun.add(object); gunMeshes.push(object); return object; };
-      const addLimbBetween = (start: THREE.Vector3, end: THREE.Vector3, radius: number, material: THREE.Material) => {
-        const direction = end.clone().sub(start);
-        const length = direction.length();
-        const limb = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.84, radius * 1.24, length, 12, 1), material);
-        limb.position.copy(start).add(end).multiplyScalar(0.5);
-        limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
-        return addPart(limb);
-      };
       const model = weaponModels.get(weapon.id)?.clone(true);
       const usesDetailedModel = Boolean(model?.userData.detailedViewmodel);
 
-      if (model) {
+      if (weapon.id === "karambit") {
+        const knife = new THREE.Group();
+        const bladeMaterial = new THREE.MeshPhysicalMaterial({ color: 0x9ca9ad, roughness: 0.16, metalness: 0.96, clearcoat: 0.28, clearcoatRoughness: 0.18, envMapIntensity: 1.65 });
+        const edgeMaterial = new THREE.MeshPhysicalMaterial({ color: 0xd7e2e2, roughness: 0.1, metalness: 1, clearcoat: 0.35 });
+        const gripMaterial = new THREE.MeshStandardMaterial({ color: 0x101718, roughness: 0.48, metalness: 0.34 });
+        const blade = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.052, 7, 34, Math.PI * 1.34), bladeMaterial);
+        blade.rotation.set(Math.PI / 2, 0.2, -0.42);
+        blade.position.set(-0.065, 0.045, -0.37);
+        knife.add(blade);
+        const edge = new THREE.Mesh(new THREE.TorusGeometry(0.273, 0.012, 5, 34, Math.PI * 1.18), edgeMaterial);
+        edge.rotation.copy(blade.rotation);
+        edge.position.copy(blade.position).add(new THREE.Vector3(-0.006, 0.008, -0.012));
+        knife.add(edge);
+        const handle = new THREE.Mesh(new RoundedBoxGeometry(0.115, 0.105, 0.34, 4, 0.025), gripMaterial);
+        handle.position.set(0.075, -0.04, -0.08);
+        handle.rotation.set(-0.12, -0.24, 0.18);
+        knife.add(handle);
+        for (const offset of [-0.09, 0, 0.09]) {
+          const groove = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.012, 5, 14, Math.PI), accent);
+          groove.rotation.set(Math.PI / 2, 0, Math.PI / 2);
+          groove.position.set(0.075, -0.017, -0.08 + offset);
+          knife.add(groove);
+        }
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.029, 10, 28), bladeMaterial);
+        ring.position.set(0.075, -0.03, 0.125);
+        knife.add(ring);
+        knife.rotation.set(0.08, -0.12, -0.18);
+        knife.traverse((child) => { if (child instanceof THREE.Mesh) child.castShadow = true; });
+        addObject(knife);
+      } else if (model) {
         model.rotation.y = usesDetailedModel ? Number(model.userData.viewRotationY ?? 0) : Math.PI / 2;
         model.rotation.z = weapon.id === "akm" && !usesDetailedModel ? -0.018 : 0;
         model.scale.setScalar(usesDetailedModel ? Number(model.userData.viewScale ?? 0.1) : weapon.id === "akm" ? 0.29 : 0.45);
@@ -588,46 +666,11 @@ export function BreachlineGame() {
         frontSight.position.set(0, 0.17, -weapon.length * 0.86);
       }
 
-      const rightGrip = new THREE.Vector3(0.045, -0.18, -0.035);
-      const leftGrip = weapon.id === "akm"
-        ? usesDetailedModel ? new THREE.Vector3(0.035, -0.13, -0.27) : new THREE.Vector3(-0.035, -0.13, -weapon.length * 0.72)
-        : new THREE.Vector3(-0.035, -0.185, -0.095);
-      addLimbBetween(new THREE.Vector3(0.46, -0.69, -0.06), rightGrip.clone().add(new THREE.Vector3(0.025, -0.02, 0.04)), 0.063, sleeve);
-      addLimbBetween(new THREE.Vector3(usesDetailedModel ? -0.2 : -0.36, -0.69, -0.04), leftGrip.clone().add(new THREE.Vector3(-0.015, -0.015, 0.05)), 0.061, sleeve);
-
-      const makeHand = (position: THREE.Vector3, rotation: THREE.Euler, support: boolean) => {
-        const hand = new THREE.Group();
-        hand.position.copy(position);
-        hand.rotation.copy(rotation);
-        const palm = new THREE.Mesh(new RoundedBoxGeometry(support ? 0.135 : 0.135, support ? 0.088 : 0.165, support ? 0.18 : 0.11, 4, 0.027), glove);
-        palm.castShadow = true;
-        hand.add(palm);
-        const knuckle = new THREE.Mesh(new RoundedBoxGeometry(support ? 0.12 : 0.115, support ? 0.027 : 0.035, support ? 0.135 : 0.09, 3, 0.014), glovePad);
-        knuckle.position.set(0, support ? 0.045 : 0.07, -0.012);
-        knuckle.castShadow = true;
-        hand.add(knuckle);
-        for (let finger = 0; finger < 4; finger++) {
-          const digit = new THREE.Mesh(new THREE.CapsuleGeometry(0.014, support ? 0.068 : 0.062, 5, 8), glove);
-          digit.position.set(-0.048 + finger * 0.032, support ? -0.018 : -0.066 + finger * 0.002, support ? -0.085 : -0.055);
-          digit.rotation.x = support ? Math.PI / 2.35 : -0.28;
-          if (support) digit.rotation.z = (finger - 1.5) * 0.055;
-          digit.castShadow = true;
-          hand.add(digit);
-        }
-        const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.016, 0.065, 5, 8), glove);
-        thumb.position.set(support ? 0.075 : -0.073, support ? 0.015 : -0.015, support ? -0.02 : -0.04);
-        thumb.rotation.set(support ? 0.8 : -0.55, 0, support ? -0.55 : 0.5);
-        thumb.castShadow = true;
-        hand.add(thumb);
-        hand.traverse((child) => { if (child instanceof THREE.Mesh) child.castShadow = true; });
-        return addObject(hand);
-      };
-      makeHand(rightGrip, new THREE.Euler(-0.22, 0.02, -0.12), false);
-      makeHand(leftGrip, new THREE.Euler(weapon.id === "akm" ? 0.12 : -0.3, weapon.id === "akm" ? 0 : -0.18, weapon.id === "akm" ? 0.04 : 0.28), true);
-
       const muzzleZ = usesDetailedModel ? Number(model?.userData.viewMuzzleZ ?? -0.54) : -weapon.length * 1.48;
       muzzle.position.set(0, 0.025, muzzleZ);
       muzzleFlash.position.set(0, 0.025, muzzleZ);
+      muzzle.visible = weapon.category !== "melee";
+      muzzleFlash.visible = false;
     };
 
     const modelBase = new URL("./models/quaternius/", window.location.href).href;
@@ -755,14 +798,14 @@ export function BreachlineGame() {
     });
 
     const audio = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const sound = (kind: "shot" | "hit" | "step" | "plant" | "explode" | "empty") => {
+    const sound = (kind: "shot" | "hit" | "step" | "plant" | "explode" | "empty" | "slash") => {
       if (settingsRef.current.volume <= 0 || audio.state === "suspended") return;
       const osc = audio.createOscillator();
       const gain = audio.createGain();
       const now = audio.currentTime;
       const config = {
         shot: [92, 0.055, "sawtooth"], hit: [620, 0.045, "square"], step: [58, 0.03, "sine"],
-        plant: [880, 0.12, "square"], explode: [42, 0.32, "sawtooth"], empty: [210, 0.035, "square"],
+        plant: [880, 0.12, "square"], explode: [42, 0.32, "sawtooth"], empty: [210, 0.035, "square"], slash: [165, 0.075, "sawtooth"],
       } as const;
       const [frequency, duration, type] = config[kind];
       osc.type = type;
@@ -881,8 +924,8 @@ export function BreachlineGame() {
       return group;
     };
 
-    for (let i = 0; i < 9; i++) {
-      const team: Team = i < 4 ? "attack" : "defend";
+    for (let i = 0; i < 20; i++) {
+      const team: Team = i % 2 === 0 ? "attack" : "defend";
       const id = `bot-${i}`;
       const root = createBotModel(team, id);
       bots.push({
@@ -905,11 +948,14 @@ export function BreachlineGame() {
         deathStartQuaternion: new THREE.Quaternion(),
         deathTargetQuaternion: new THREE.Quaternion(),
         deathDrift: new THREE.Vector3(),
+        respawnAt: 0,
       });
     }
 
     let screenActive = false;
+    let gameMode: GameMode = "demolition";
     let trainingMode = false;
+    let freeForAllMode = false;
     let playerTeam: Team = "attack";
     let playerHealth = 100;
     let playerArmor = 0;
@@ -939,6 +985,8 @@ export function BreachlineGame() {
     let recoil = 0;
     let viewmodelSwayX = 0;
     let viewmodelSwayY = 0;
+    let inspectStartedAt = -10;
+    let inspectDuration = 0;
     let jumpHeight = 0;
     let jumpVelocity = 0;
     let aiming = false;
@@ -979,13 +1027,24 @@ export function BreachlineGame() {
     scene.add(bombMesh);
 
     const spawnByTeam = (team: Team, index: number) => {
-      const baseX = team === "attack" ? -27 : 27;
-      const baseZ = team === "attack" ? 27 : -27;
-      return new THREE.Vector3(baseX + (index % 3) * 1.5, 0, baseZ + Math.floor(index / 3) * 1.5);
+      const baseZ = team === "attack" ? 35 : -35;
+      return new THREE.Vector3((index % 5 - 2) * 1.45, 0, baseZ + Math.floor(index / 5) * (team === "attack" ? -1.4 : 1.4));
+    };
+    const ffaSpawns = [
+      [-36, 35], [36, 35], [0, 35], [-36, 15], [36, 15], [-18, 3], [18, 3],
+      [-36, -15], [36, -15], [0, -18], [-18, -23], [18, -23], [-36, -36],
+      [36, -36], [0, -36], [-20, 17], [20, 17], [-15, -3], [15, -3], [0, 4], [0, 27],
+    ] as const;
+    let ffaSpawnCursor = 0;
+    const nextFfaSpawn = () => {
+      const point = ffaSpawns[ffaSpawnCursor % ffaSpawns.length];
+      // Eight is coprime with the 21-point list, so each full rotation visits every spawn.
+      ffaSpawnCursor += 8;
+      return new THREE.Vector3(point[0] + (Math.random() - 0.5) * 0.8, 0, point[1] + (Math.random() - 0.5) * 0.8);
     };
 
     const collides = (x: number, z: number, radius = 0.42) => {
-      if (x < -33 || x > 33 || z < -33 || z > 33) return true;
+      if (x < -39.5 || x > 39.5 || z < -39.5 || z > 39.5) return true;
       return obstacles.some((o) => Math.abs(x - o.x) < o.w / 2 + radius && Math.abs(z - o.z) < o.d / 2 + radius);
     };
 
@@ -1021,7 +1080,15 @@ export function BreachlineGame() {
       if (!ammo[id]) return;
       weaponId = id;
       reloadingUntil = 0;
+      inspectDuration = 0;
       buildGun(WEAPONS[id]);
+    };
+    const inspectKnife = () => {
+      if (weaponId !== "karambit" || !playerAlive) return;
+      inspectStartedAt = performance.now() / 1000;
+      inspectDuration = 1.65;
+      firing = false;
+      sound("slash");
     };
 
     const setDifficulty = (value: Difficulty) => {
@@ -1032,14 +1099,14 @@ export function BreachlineGame() {
     const beginRound = () => {
       roundEndQueued = false;
       playerTeam = trainingMode ? "attack" : roundNumber <= 6 ? "attack" : "defend";
-      phase = "buy";
-      phaseTime = trainingMode ? 6 : 12;
-      roundTime = trainingMode ? 180 : 105;
+      phase = freeForAllMode ? "live" : "buy";
+      phaseTime = freeForAllMode ? 0 : trainingMode ? 6 : 12;
+      roundTime = freeForAllMode ? 300 : trainingMode ? 180 : 105;
       roundMessage = "";
       playerHealth = 100;
       playerAlive = true;
-      playerArmor = Math.min(playerArmor, 100);
-      playerCarryingBomb = playerTeam === "attack";
+      playerArmor = freeForAllMode ? 100 : Math.min(playerArmor, 100);
+      playerCarryingBomb = !freeForAllMode && playerTeam === "attack";
       bombPlanted = false;
       bombSite = null;
       bombTime = 38;
@@ -1050,8 +1117,8 @@ export function BreachlineGame() {
       actionText = "";
       grenadeFrag = 1;
       grenadeSmoke = 1;
-      camera.position.copy(spawnByTeam(playerTeam, 0)).setY(1.68);
-      yaw = playerTeam === "attack" ? -Math.PI * 0.25 : Math.PI * 0.75;
+      camera.position.copy(freeForAllMode ? nextFfaSpawn() : spawnByTeam(playerTeam, 0)).setY(1.68);
+      yaw = freeForAllMode ? Math.random() * Math.PI * 2 : playerTeam === "attack" ? 0 : Math.PI;
       pitch = 0;
       jumpHeight = 0;
       jumpVelocity = 0;
@@ -1065,23 +1132,27 @@ export function BreachlineGame() {
       gun.rotation.set(0, 0, 0);
       velocity.set(0, 0, 0);
       bots.forEach((bot, index) => {
-        bot.team = index < 4 ? playerTeam : otherTeam(playerTeam);
+        const active = freeForAllMode || index < 9;
+        bot.team = freeForAllMode ? (index % 2 === 0 ? "attack" : "defend") : index < 4 ? playerTeam : otherTeam(playerTeam);
         bot.root.traverse((child) => {
           if (child.userData.uniform && child instanceof THREE.Mesh) {
-            (child.material as THREE.MeshStandardMaterial).color.setHex(bot.team === "attack" ? 0xb3572f : 0x326a78);
+            const ffaColor = new THREE.Color().setHSL((index * 0.127 + 0.02) % 1, 0.42, 0.38);
+            (child.material as THREE.MeshStandardMaterial).color.copy(freeForAllMode ? ffaColor : new THREE.Color(bot.team === "attack" ? 0xb3572f : 0x326a78));
           }
         });
         bot.health = 100;
-        bot.alive = true;
-        bot.root.visible = true;
+        bot.alive = active;
+        bot.root.visible = active;
         bot.fireCooldown = 0.5 + Math.random();
         bot.decisionCooldown = 0;
         bot.defuseProgress = 0;
         bot.carryingBomb = false;
         bot.deathTime = -1;
+        bot.respawnAt = 0;
+        if (!active) return;
         const teamIndex = index < 4 ? index : index - 4;
-        bot.root.position.copy(spawnByTeam(bot.team, teamIndex + (bot.team === playerTeam ? 1 : 0)));
-        bot.root.rotation.set(0, bot.team === "attack" ? -Math.PI * 0.25 : Math.PI * 0.75, 0);
+        bot.root.position.copy(freeForAllMode ? nextFfaSpawn() : spawnByTeam(bot.team, teamIndex + (bot.team === playerTeam ? 1 : 0)));
+        bot.root.rotation.set(0, freeForAllMode ? Math.random() * Math.PI * 2 : bot.team === "attack" ? 0 : Math.PI, 0);
         const legA = bot.root.userData.legA as THREE.Mesh;
         const legB = bot.root.userData.legB as THREE.Mesh;
         const armA = bot.root.userData.armA as THREE.Mesh;
@@ -1090,7 +1161,7 @@ export function BreachlineGame() {
         legB.rotation.set(0, 0, 0);
         armA.rotation.set(-0.82, 0, 0.2);
         armB.rotation.set(-1.02, 0, -0.3);
-        bot.destination.copy(bot.team === "attack" ? (index % 2 ? zoneA : zoneB) : (index % 2 ? zoneA : zoneB));
+        bot.destination.copy(freeForAllMode ? nextFfaSpawn() : (index % 2 ? zoneA : zoneB));
       });
       if (trainingMode) {
         bots.filter((b) => b.team === "attack").forEach((b) => { b.root.visible = false; b.alive = false; });
@@ -1112,6 +1183,7 @@ export function BreachlineGame() {
         });
       }
       if (!ammo.v9) ammo.v9 = { clip: WEAPONS.v9.magazine, reserve: WEAPONS.v9.reserve };
+      if (!ammo.karambit) ammo.karambit = { clip: 1, reserve: 0 };
       equip(primaryId ?? "v9");
     };
 
@@ -1123,6 +1195,20 @@ export function BreachlineGame() {
         const raw = localStorage.getItem("breachline.stats");
         const saved = raw ? JSON.parse(raw) : { matches: 0, wins: 0, eliminations: 0 };
         const next = { matches: saved.matches + 1, wins: saved.wins + (winningTeam === playerTeam ? 1 : 0), eliminations: saved.eliminations + playerKills };
+        localStorage.setItem("breachline.stats", JSON.stringify(next));
+        setStats(next);
+      } catch { /* noop */ }
+    };
+
+    const finishFreeForAll = (winner: string) => {
+      if (phase === "matchEnd") return;
+      phase = "matchEnd";
+      roundMessage = winner === "YOU" ? "FREE FOR ALL CHAMPION" : `${winner} WINS THE ARENA`;
+      document.exitPointerLock?.();
+      try {
+        const raw = localStorage.getItem("breachline.stats");
+        const saved = raw ? JSON.parse(raw) : { matches: 0, wins: 0, eliminations: 0 };
+        const next = { matches: saved.matches + 1, wins: saved.wins + (winner === "YOU" ? 1 : 0), eliminations: saved.eliminations + playerKills };
         localStorage.setItem("breachline.stats", JSON.stringify(next));
         setStats(next);
       } catch { /* noop */ }
@@ -1162,14 +1248,19 @@ export function BreachlineGame() {
         const fallRotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), fallDirection);
         bot.deathTargetQuaternion.copy(fallRotation.multiply(bot.deathStartQuaternion));
         bot.deaths += 1;
-        addFeed(attackerName, bot.name, weapon, attackerTeam === bot.team);
+        addFeed(attackerName, bot.name, weapon, !freeForAllMode && attackerTeam === bot.team);
         if (attackerName === "YOU") {
           playerKills += 1;
-          playerMoney = Math.min(16000, playerMoney + (attackerTeam === bot.team ? 0 : 300));
+          playerMoney = Math.min(16000, playerMoney + (!freeForAllMode && attackerTeam === bot.team ? 0 : 300));
+          if (freeForAllMode && playerKills >= 30) finishFreeForAll("YOU");
         } else {
           const killer = bots.find((b) => b.name === attackerName);
-          if (killer) killer.kills += 1;
+          if (killer) {
+            killer.kills += 1;
+            if (freeForAllMode && killer.kills >= 30) finishFreeForAll(killer.name);
+          }
         }
+        if (freeForAllMode) bot.respawnAt = performance.now() / 1000 + 2.2;
         if (bot.carryingBomb) {
           const nextCarrier = bots.find((b) => b.team === "attack" && b.alive);
           if (nextCarrier) nextCarrier.carryingBomb = true;
@@ -1194,6 +1285,7 @@ export function BreachlineGame() {
         playerDeaths += 1;
         attacker.kills += 1;
         addFeed(attacker.name, "YOU", "AKM");
+        if (freeForAllMode && attacker.kills >= 30) finishFreeForAll(attacker.name);
         if (playerCarryingBomb) {
           playerCarryingBomb = false;
           const nextCarrier = bots.find((b) => b.team === "attack" && b.alive);
@@ -1242,6 +1334,26 @@ export function BreachlineGame() {
       const now = performance.now() / 1000;
       const weapon = currentWeapon();
       if (now < nextShotAt || now < reloadingUntil) return;
+      if (weapon.category === "melee") {
+        firing = false;
+        nextShotAt = now + weapon.fireRate;
+        recoil = 0.18;
+        sound("slash");
+        const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+        raycaster.set(camera.position, direction);
+        raycaster.far = 2.45;
+        const targets = bots.filter((bot) => bot.alive && (freeForAllMode || bot.team !== playerTeam)).map((bot) => bot.root);
+        const botHit = raycaster.intersectObjects(targets, true)[0];
+        const wallHit = raycaster.intersectObjects(obstacleMeshes, false)[0];
+        if (botHit && (!wallHit || botHit.distance < wallHit.distance)) {
+          const bot = bots.find((candidate) => candidate.id === botHit.object.userData.botId);
+          if (bot) {
+            damageBot(bot, weapon.damage, "YOU", weapon.short, playerTeam, direction);
+            spawnImpact(botHit.point, 0xff5a3d);
+          }
+        }
+        return;
+      }
       const mag = ammo[weapon.id];
       if (!mag || mag.clip <= 0) {
         sound("empty");
@@ -1270,7 +1382,7 @@ export function BreachlineGame() {
         direction.normalize();
         raycaster.set(camera.position, direction);
         raycaster.far = 90;
-        const botTargets = bots.filter((b) => b.alive && b.team !== playerTeam).map((b) => b.root);
+        const botTargets = bots.filter((b) => b.alive && (freeForAllMode || b.team !== playerTeam)).map((b) => b.root);
         const botHits = raycaster.intersectObjects(botTargets, true);
         const wallHits = raycaster.intersectObjects(obstacleMeshes, false);
         const botHit = botHits[0];
@@ -1385,14 +1497,14 @@ export function BreachlineGame() {
     };
 
     const pickBotTarget = (bot: Bot) => {
-      const opponents = bots.filter((b) => b.alive && b.team !== bot.team);
+      const opponents = bots.filter((b) => b !== bot && b.alive && (freeForAllMode || b.team !== bot.team));
       let target: { position: THREE.Vector3; bot?: Bot; player?: boolean } | null = null;
       let best = Infinity;
       for (const opponent of opponents) {
         const dist = bot.root.position.distanceTo(opponent.root.position);
         if (dist < best) { best = dist; target = { position: opponent.root.position, bot: opponent }; }
       }
-      if (playerAlive && playerTeam !== bot.team) {
+      if (playerAlive && (freeForAllMode || playerTeam !== bot.team)) {
         const dist = bot.root.position.distanceTo(camera.position);
         if (dist < best) target = { position: camera.position, player: true };
       }
@@ -1402,7 +1514,27 @@ export function BreachlineGame() {
     const updateBots = (dt: number) => {
       for (const bot of bots) {
         if (bot.alive || bot.deathTime < 0 || !bot.root.visible) continue;
-        bot.deathTime = Math.min(1.2, bot.deathTime + dt);
+        if (freeForAllMode && bot.respawnAt > 0 && performance.now() / 1000 >= bot.respawnAt) {
+          bot.health = 100;
+          bot.alive = true;
+          bot.deathTime = -1;
+          bot.respawnAt = 0;
+          bot.root.position.copy(nextFfaSpawn());
+          bot.root.quaternion.identity();
+          bot.root.rotation.y = Math.random() * Math.PI * 2;
+          bot.destination.copy(nextFfaSpawn());
+          bot.fireCooldown = 0.8 + Math.random() * 0.6;
+          const legA = bot.root.userData.legA as THREE.Mesh;
+          const legB = bot.root.userData.legB as THREE.Mesh;
+          const armA = bot.root.userData.armA as THREE.Mesh;
+          const armB = bot.root.userData.armB as THREE.Mesh;
+          legA.rotation.set(0, 0, 0);
+          legB.rotation.set(0, 0, 0);
+          armA.rotation.set(-0.82, 0, 0.2);
+          armB.rotation.set(-1.02, 0, -0.3);
+          continue;
+        }
+        bot.deathTime = Math.min(freeForAllMode ? 2.4 : 1.2, bot.deathTime + dt);
         const fallT = clamp(bot.deathTime / 0.62, 0, 1);
         const eased = 1 - Math.pow(1 - fallT, 3);
         bot.root.position.copy(bot.deathStart).addScaledVector(bot.deathDrift, eased);
@@ -1460,7 +1592,12 @@ export function BreachlineGame() {
           continue;
         }
 
-        if (bot.team === "attack") {
+        if (freeForAllMode) {
+          if (bot.decisionCooldown <= 0 || bot.root.position.distanceTo(bot.destination) < 1.2) {
+            bot.destination.copy(nextFfaSpawn());
+            bot.decisionCooldown = 1.2 + Math.random() * 2.2;
+          }
+        } else if (bot.team === "attack") {
           if (bot.carryingBomb && !bombPlanted) {
             const zone = bot.destination.distanceTo(zoneA) < bot.destination.distanceTo(zoneB) ? zoneA : zoneB;
             bot.destination.copy(zone);
@@ -1489,7 +1626,7 @@ export function BreachlineGame() {
 
         const direction = bot.destination.clone().sub(bot.root.position).setY(0);
         if (direction.lengthSq() < 1) {
-          bot.destination.set((Math.random() - 0.5) * 48, 0, (Math.random() - 0.5) * 48);
+          bot.destination.copy(freeForAllMode ? nextFfaSpawn() : new THREE.Vector3((Math.random() - 0.5) * 66, 0, (Math.random() - 0.5) * 66));
           continue;
         }
         direction.normalize();
@@ -1509,7 +1646,7 @@ export function BreachlineGame() {
 
     const updateObjective = (dt: number) => {
       actionText = "";
-      if (phase !== "live" || !playerAlive) return;
+      if (freeForAllMode || phase !== "live" || !playerAlive) return;
       const interacting = keys.has("KeyE") || touchKeys.has("interact");
       let canAct = false;
       if (playerTeam === "attack" && playerCarryingBomb && !bombPlanted) {
@@ -1545,7 +1682,7 @@ export function BreachlineGame() {
 
     const updatePlayer = (dt: number) => {
       if (!screenActive) return;
-      const targetFov = aiming ? (weaponId === "akm" ? 58 : 64) : settingsRef.current.fov;
+      const targetFov = aiming && currentWeapon().category !== "melee" ? (weaponId === "akm" ? 58 : 64) : settingsRef.current.fov;
       camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 8);
       camera.updateProjectionMatrix();
       viewmodelSwayX = THREE.MathUtils.lerp(viewmodelSwayX, 0, dt * 7.5);
@@ -1567,12 +1704,13 @@ export function BreachlineGame() {
       const crouched = keys.has("ControlLeft") || touchKeys.has("crouch");
       const sprinting = (keys.has("ShiftLeft") || touchKeys.has("sprint")) && forwardInput > 0 && !crouched;
       const speed = sprinting ? 7.3 : crouched ? 2.8 : 5.2;
+      const airborne = jumpHeight > 0.01 || jumpVelocity > 0.01;
       const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
       const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
       const desired = forward.multiplyScalar(forwardInput).add(right.multiplyScalar(sideInput));
       if (desired.lengthSq() > 1) desired.normalize();
       desired.multiplyScalar(speed);
-      velocity.lerp(desired, 1 - Math.exp(-dt * 10));
+      velocity.lerp(desired, 1 - Math.exp(-dt * (airborne ? 2.25 : 10)));
       const nextX = camera.position.x + velocity.x * dt;
       const nextZ = camera.position.z + velocity.z * dt;
       if (!collides(nextX, camera.position.z)) camera.position.x = nextX;
@@ -1587,23 +1725,37 @@ export function BreachlineGame() {
       }
       jumpVelocity -= 10.8 * dt;
       jumpHeight += jumpVelocity * dt;
-      if (jumpHeight < 0) { jumpHeight = 0; jumpVelocity = 0; }
+      if (jumpHeight < 0) {
+        jumpHeight = 0;
+        jumpVelocity = 0;
+        if (keys.has("Space") && playerAlive && !crouched) {
+          jumpHeight = 0.002;
+          jumpVelocity = 5.05;
+          const hopSpeed = velocity.length();
+          if (hopSpeed > 3.8) velocity.multiplyScalar(Math.min(1.045, 9.35 / hopSpeed));
+        }
+      }
       const height = crouched ? 1.18 : 1.68;
       camera.position.y = THREE.MathUtils.lerp(camera.position.y, height + jumpHeight + (moving && jumpHeight === 0 ? Math.sin(bob) * 0.035 : 0), dt * 12);
       recoil = THREE.MathUtils.lerp(recoil, 0, dt * 9);
       const reloadRemaining = Math.max(0, reloadingUntil - performance.now() / 1000);
       const reloadPose = reloadRemaining > 0 ? Math.sin((1 - reloadRemaining / currentWeapon().reload) * Math.PI) : 0;
+      const inspectElapsed = performance.now() / 1000 - inspectStartedAt;
+      const inspectT = inspectDuration > 0 ? clamp(inspectElapsed / inspectDuration, 0, 1) : 1;
+      const inspecting = weaponId === "karambit" && inspectT < 1;
+      const inspectArc = inspecting ? Math.sin(inspectT * Math.PI) : 0;
+      const inspectSpin = inspecting ? (1 - Math.cos(inspectT * Math.PI * 2)) * Math.PI : 0;
       const walkX = moving ? Math.sin(bob * 0.5) * 0.018 : 0;
       const walkY = moving ? Math.abs(Math.sin(bob)) * 0.014 : 0;
-      const baseX = aiming ? 0 : weaponId === "akm" ? 0.34 : 0.295;
-      const baseY = aiming ? -0.285 : weaponId === "akm" ? -0.31 : -0.3;
-      const baseZ = aiming ? (weaponId === "akm" ? -0.45 : -0.43) : (weaponId === "akm" ? -0.57 : -0.52);
-      gun.position.x = THREE.MathUtils.lerp(gun.position.x, baseX + walkX + viewmodelSwayX, dt * 11);
-      gun.position.y = THREE.MathUtils.lerp(gun.position.y, baseY + walkY + recoil * 0.38 + viewmodelSwayY - reloadPose * 0.09, dt * 12);
-      gun.position.z = THREE.MathUtils.lerp(gun.position.z, baseZ + recoil + reloadPose * 0.08, dt * 12);
-      gun.rotation.x = recoil * 1.28 + viewmodelSwayY * 0.75 + reloadPose * 0.48;
-      gun.rotation.y = (aiming ? 0 : weaponId === "akm" ? 0.11 : 0.32) + viewmodelSwayX * 0.8 - reloadPose * 0.22;
-      gun.rotation.z = -walkX * 0.55 - viewmodelSwayX * 0.6 + reloadPose * 0.86;
+      const baseX = aiming ? 0 : weaponId === "akm" ? 0.35 : weaponId === "karambit" ? 0.29 : 0.31;
+      const baseY = aiming ? -0.285 : weaponId === "karambit" ? -0.25 : -0.3;
+      const baseZ = aiming ? (weaponId === "akm" ? -0.45 : -0.43) : weaponId === "akm" ? -0.59 : weaponId === "karambit" ? -0.48 : -0.56;
+      gun.position.x = THREE.MathUtils.lerp(gun.position.x, baseX + walkX + viewmodelSwayX - inspectArc * 0.14, dt * 11);
+      gun.position.y = THREE.MathUtils.lerp(gun.position.y, baseY + walkY + recoil * 0.38 + viewmodelSwayY - reloadPose * 0.09 + inspectArc * 0.12, dt * 12);
+      gun.position.z = THREE.MathUtils.lerp(gun.position.z, baseZ + recoil + reloadPose * 0.08 - inspectArc * 0.08, dt * 12);
+      gun.rotation.x = recoil * 1.28 + viewmodelSwayY * 0.75 + reloadPose * 0.48 + inspectArc * 0.62;
+      gun.rotation.y = (aiming ? 0 : weaponId === "akm" ? 0.11 : weaponId === "karambit" ? -0.22 : 0.3) + viewmodelSwayX * 0.8 - reloadPose * 0.22 + inspectArc * 0.8;
+      gun.rotation.z = -walkX * 0.55 - viewmodelSwayX * 0.6 + reloadPose * 0.86 + inspectSpin;
       camera.rotation.set(pitch, yaw, 0);
       if (firing) fireShot();
     };
@@ -1612,22 +1764,46 @@ export function BreachlineGame() {
     const publishSnapshot = () => {
       const current = currentWeapon();
       const mag = ammo[current.id] ?? { clip: 0, reserve: 0 };
-      const objective = phase === "buy" ? "Buy phase · Prepare your loadout" : bombPlanted ? `${bombSite} site · Charge armed` : playerTeam === "attack" ? "Plant the charge at A or B" : "Defend both objective sites";
+      const objective = freeForAllMode ? "Free for all · First operator to 30 eliminations" : phase === "buy" ? "Buy phase · Prepare your loadout" : bombPlanted ? `${bombSite} site · Charge armed` : playerTeam === "attack" ? "Plant the charge at A or B" : "Defend both objective sites";
+      const visibleBots = bots.filter((bot) => bot.root.visible);
       const playerRows: PlayerRow[] = [
         { name: "YOU", team: playerTeam, kills: playerKills, deaths: playerDeaths, alive: playerAlive, isPlayer: true },
-        ...bots.map((bot) => ({ name: bot.name, team: bot.team, kills: bot.kills, deaths: bot.deaths, alive: bot.alive })),
+        ...visibleBots.map((bot) => ({ name: bot.name, team: bot.team, kills: bot.kills, deaths: bot.deaths, alive: bot.alive })),
       ];
+      const leaderKills = Math.max(0, ...bots.map((bot) => bot.kills));
       setSnapshot({
+        gameMode,
         phase, team: playerTeam, health: Math.round(playerHealth), armor: Math.round(playerArmor), money: Math.round(playerMoney),
-        ammo: mag.clip, reserve: mag.reserve, weapon: current.label, weaponId: current.id, roundTime, phaseTime, attackScore, defendScore,
+        ammo: mag.clip, reserve: mag.reserve, weapon: current.label, weaponId: current.id, roundTime, phaseTime, attackScore: freeForAllMode ? playerKills : attackScore, defendScore: freeForAllMode ? leaderKills : defendScore,
         round: roundNumber, alive: playerAlive, bombPlanted, bombTime, bombSite, actionText, actionProgress, objective, feed,
         dots: [
           { id: "you", x: camera.position.x, z: camera.position.z, team: playerTeam, alive: playerAlive },
-          ...bots.map((bot) => ({ id: bot.id, x: bot.root.position.x, z: bot.root.position.z, team: bot.team, alive: bot.alive })),
+          ...visibleBots.map((bot) => ({ id: bot.id, x: bot.root.position.x, z: bot.root.position.z, team: bot.team, alive: bot.alive })),
         ],
         players: playerRows, roundMessage, hitMarker: performance.now() < hitMarkerUntil, kills: playerKills, deaths: playerDeaths,
         ping: 18 + Math.floor(Math.random() * 9),
       });
+    };
+
+    const respawnPlayerFreeForAll = () => {
+      playerHealth = 100;
+      playerArmor = 100;
+      playerAlive = true;
+      playerDeathTime = 0;
+      playerDeathRoll = 0;
+      camera.position.copy(nextFfaSpawn()).setY(1.68);
+      yaw = Math.random() * Math.PI * 2;
+      pitch = 0;
+      jumpHeight = 0;
+      jumpVelocity = 0;
+      velocity.set(0, 0, 0);
+      gun.visible = true;
+      gun.rotation.set(0, 0, 0);
+      const akAmmo = ammo.akm;
+      if (akAmmo) { akAmmo.clip = WEAPONS.akm.magazine; akAmmo.reserve = WEAPONS.akm.reserve; }
+      const pistolAmmo = ammo.v9;
+      if (pistolAmmo) { pistolAmmo.clip = WEAPONS.v9.magazine; pistolAmmo.reserve = WEAPONS.v9.reserve; }
+      equip(primaryId ?? "akm");
     };
 
     const updateRound = (dt: number) => {
@@ -1643,6 +1819,15 @@ export function BreachlineGame() {
           }
         }
       } else if (phase === "live") {
+        if (freeForAllMode) {
+          roundTime -= dt;
+          if (!playerAlive && playerDeathTime >= 2.15) respawnPlayerFreeForAll();
+          if (roundTime <= 0) {
+            const leader = [{ name: "YOU", kills: playerKills }, ...bots.map((bot) => ({ name: bot.name, kills: bot.kills }))].sort((a, b) => b.kills - a.kills)[0];
+            finishFreeForAll(leader.name);
+          }
+          return;
+        }
         if (bombPlanted) {
           bombTime -= dt;
           if (bombTime <= 0) endRound("attack", "TARGET DESTROYED");
@@ -1682,20 +1867,22 @@ export function BreachlineGame() {
         lockPointer();
         audio.resume();
         if (event.button === 0) fireShot();
-        if (event.button === 2) aiming = true;
+        if (event.button === 2 && currentWeapon().category !== "melee") aiming = true;
         return;
       }
       if (event.button === 0) { firing = true; fireShot(); }
-      if (event.button === 2) aiming = true;
+      if (event.button === 2 && currentWeapon().category !== "melee") aiming = true;
     };
     const onMouseUp = (event: MouseEvent) => { if (event.button === 0) firing = false; if (event.button === 2) aiming = false; };
     const onContextMenu = (event: MouseEvent) => event.preventDefault();
     const onKeyDown = (event: KeyboardEvent) => {
       keys.add(event.code);
       if (event.code === "KeyR") reload();
-      if (event.code === "Space" && jumpHeight <= 0.01 && playerAlive) jumpVelocity = 4.65;
+      if (event.code === "Space" && jumpHeight <= 0.01 && playerAlive) { jumpHeight = 0.002; jumpVelocity = 5.05; }
       if (event.code === "Digit1") equip(primaryId ?? "v9");
       if (event.code === "Digit2") equip("v9");
+      if (event.code === "Digit3") equip("karambit");
+      if (event.code === "KeyF") inspectKnife();
       if (event.code === "Digit4") trackedThrowGrenade("frag");
       if (event.code === "Digit5") trackedThrowGrenade("smoke");
       if (event.code === "Tab") { event.preventDefault(); setShowScoreboard(true); }
@@ -1739,21 +1926,27 @@ export function BreachlineGame() {
     window.addEventListener("resize", onResize);
 
     engineRef.current = {
-      start: (selectedDifficulty, training) => {
+      start: (selectedDifficulty, mode) => {
         screenActive = true;
         buyOpen = false;
         setShowBuy(false);
-        trainingMode = training;
+        gameMode = mode;
+        trainingMode = mode === "training";
+        freeForAllMode = mode === "ffa";
         attackScore = 0;
         defendScore = 0;
         roundNumber = 1;
         playerKills = 0;
         playerDeaths = 0;
-        playerMoney = training ? 16000 : 3200;
+        playerMoney = trainingMode ? 16000 : freeForAllMode ? 0 : 3200;
         playerArmor = 0;
-        primaryId = null;
-        weaponId = "v9";
-        ammo = { v9: { clip: 12, reserve: 48 } };
+        primaryId = freeForAllMode ? "akm" : null;
+        weaponId = freeForAllMode ? "akm" : "v9";
+        ammo = {
+          v9: { clip: WEAPONS.v9.magazine, reserve: WEAPONS.v9.reserve },
+          karambit: { clip: 1, reserve: 0 },
+          ...(freeForAllMode ? { akm: { clip: WEAPONS.akm.magazine, reserve: WEAPONS.akm.reserve } } : {}),
+        };
         bots.forEach((bot) => { bot.kills = 0; bot.deaths = 0; });
         setDifficulty(selectedDifficulty);
         beginRound();
@@ -1762,7 +1955,7 @@ export function BreachlineGame() {
       resume: () => { audio.resume(); lockPointer(); },
       buy,
       buyArmor,
-      setWeapon: (slot) => equip(slot === 1 ? (primaryId ?? "v9") : "v9"),
+      setWeapon: (slot) => equip(slot === 1 ? (primaryId ?? "v9") : slot === 2 ? "v9" : "karambit"),
       throwGrenade: trackedThrowGrenade,
       setBuyMenu: (open) => {
         buyOpen = open;
@@ -1862,12 +2055,12 @@ export function BreachlineGame() {
     };
   }, []);
 
-  const startGame = useCallback((training = false) => {
+  const startGame = useCallback((mode: GameMode = "demolition") => {
     setScreen("game");
     setPaused(false);
     setShowBuy(false);
     setShowSettings(false);
-    window.setTimeout(() => engineRef.current?.start(training ? "recruit" : difficulty, training), 0);
+    window.setTimeout(() => engineRef.current?.start(mode === "training" ? "recruit" : difficulty, mode), 0);
   }, [difficulty]);
 
   const buyItem = (id: string) => {
@@ -1891,6 +2084,7 @@ export function BreachlineGame() {
     attack: snapshot.players.filter((player) => player.team === "attack").sort((a, b) => b.kills - a.kills),
     defend: snapshot.players.filter((player) => player.team === "defend").sort((a, b) => b.kills - a.kills),
   }), [snapshot.players]);
+  const ffaScoreboard = useMemo(() => [...snapshot.players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths), [snapshot.players]);
 
   const touch = (key: string, down: boolean) => engineRef.current?.setTouch(key, down);
 
@@ -1911,24 +2105,25 @@ export function BreachlineGame() {
           <div className="menu-art" style={{ backgroundImage: "url('./menu-hero.png')" }} />
           <div className="menu-shade" />
           <header className="menu-topbar">
-            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.0 · WEB OPS</small></div>
+            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.1 · DUSTLINE</small></div>
             <div className="career-strip"><span>CAREER</span><strong>{stats.wins}W</strong><span>{stats.matches} MATCHES</span><span>{stats.eliminations} ELIMS</span></div>
           </header>
           <div className="menu-content">
-            <div className="eyebrow"><span className="live-dot" /> OPERATION 01 · FOUNDRY</div>
+            <div className="eyebrow"><span className="live-dot" /> OPERATION 02 · DUSTLINE</div>
             <h1>BREACH<span>LINE</span></h1>
-            <p className="menu-subtitle">DEMOLITION PROTOCOL</p>
-            <p className="menu-copy">Two teams. Two targets. One life per round. Break the line or hold it.</p>
+            <p className="menu-subtitle">DESERT COMBAT PROTOCOL</p>
+            <p className="menu-copy">Fight through a modern sandstone arena built around long sightlines, central doors, tunnels, and two fortified sites.</p>
             <div className="difficulty" role="group" aria-label="Bot difficulty">
               {(["recruit", "veteran", "elite"] as Difficulty[]).map((value) => (
                 <button key={value} className={difficulty === value ? "active" : ""} onClick={() => setDifficulty(value)}>{value}</button>
               ))}
             </div>
             <div className="menu-actions">
-              <button className="primary-action" onClick={() => startGame(false)}><span>DEPLOY</span><small>5V5 DEMOLITION · FOUNDRY</small></button>
-              <button className="secondary-action" onClick={() => startGame(true)}><span>TRAINING RANGE</span><small>Unlimited economy · 4 targets</small></button>
+              <button className="primary-action" onClick={() => startGame("demolition")}><span>DEMOLITION</span><small>5V5 · DUSTLINE</small></button>
+              <button className="ffa-action" onClick={() => startGame("ffa")}><span>FREE FOR ALL</span><small>YOU VS 20 BOTS · FIRST TO 30</small></button>
+              <button className="secondary-action" onClick={() => startGame("training")}><span>TRAINING</span><small>Unlimited economy · 4 targets</small></button>
             </div>
-            <div className="feature-line"><span>9 AI OPERATIVES</span><i /><span>AKM + 9MM</span><i /><span>2 OBJECTIVE SITES</span><i /><span>LOCAL CAREER</span></div>
+            <div className="feature-line"><span>20 AI OPERATIVES</span><i /><span>AKM · 9MM · KARAMBIT</span><i /><span>BUNNY HOP</span><i /><span>LOCAL CAREER</span></div>
           </div>
           <footer className="menu-footer"><span>Original browser tactical FPS · Best with headphones</span><button onClick={() => setShowSettings(true)}>SETTINGS</button></footer>
         </section>
@@ -1939,22 +2134,32 @@ export function BreachlineGame() {
           <div className="damage-flash" />
           <div className="vignette" />
           <header className="match-header">
-            <div className={`team-panel ${snapshot.team === "attack" ? "friendly attack" : "friendly defend"}`}><small>{teamLabel}</small><strong>{scoreLeft}</strong><span>{snapshot.team === "attack" ? aliveAttack : aliveDefend} ALIVE</span></div>
-            <div className="round-clock">
-              <span>ROUND {snapshot.round} · FIRST TO 7</span>
-              <strong className={snapshot.bombPlanted ? "danger" : ""}>{snapshot.phase === "buy" ? `BUY ${Math.ceil(snapshot.phaseTime)}` : snapshot.bombPlanted ? formatClock(snapshot.bombTime) : formatClock(snapshot.roundTime)}</strong>
-              <small>{snapshot.bombPlanted ? `CHARGE ARMED · SITE ${snapshot.bombSite}` : snapshot.phase === "buy" ? "PREPARE" : "LIVE"}</small>
-            </div>
-            <div className={`team-panel ${snapshot.team === "attack" ? "enemy defend" : "enemy attack"}`}><strong>{scoreRight}</strong><small>{snapshot.team === "attack" ? "WARDENS" : "STRIKERS"}</small><span>{snapshot.team === "attack" ? aliveDefend : aliveAttack} ALIVE</span></div>
+            {snapshot.gameMode === "ffa" ? (
+              <>
+                <div className="team-panel friendly attack"><small>YOU</small><strong>{snapshot.kills}</strong><span>ELIMINATIONS</span></div>
+                <div className="round-clock"><span>FREE FOR ALL · FIRST TO 30</span><strong>{formatClock(snapshot.roundTime)}</strong><small>20 BOT ARENA · LIVE</small></div>
+                <div className="team-panel enemy defend"><strong>{snapshot.defendScore}</strong><small>BOT LEADER</small><span>{snapshot.players.filter((player) => player.alive).length} ACTIVE</span></div>
+              </>
+            ) : (
+              <>
+                <div className={`team-panel ${snapshot.team === "attack" ? "friendly attack" : "friendly defend"}`}><small>{teamLabel}</small><strong>{scoreLeft}</strong><span>{snapshot.team === "attack" ? aliveAttack : aliveDefend} ALIVE</span></div>
+                <div className="round-clock">
+                  <span>ROUND {snapshot.round} · FIRST TO 7</span>
+                  <strong className={snapshot.bombPlanted ? "danger" : ""}>{snapshot.phase === "buy" ? `BUY ${Math.ceil(snapshot.phaseTime)}` : snapshot.bombPlanted ? formatClock(snapshot.bombTime) : formatClock(snapshot.roundTime)}</strong>
+                  <small>{snapshot.bombPlanted ? `CHARGE ARMED · SITE ${snapshot.bombSite}` : snapshot.phase === "buy" ? "PREPARE" : "LIVE"}</small>
+                </div>
+                <div className={`team-panel ${snapshot.team === "attack" ? "enemy defend" : "enemy attack"}`}><strong>{scoreRight}</strong><small>{snapshot.team === "attack" ? "WARDENS" : "STRIKERS"}</small><span>{snapshot.team === "attack" ? aliveDefend : aliveAttack} ALIVE</span></div>
+              </>
+            )}
           </header>
 
           <aside className="minimap" aria-label="Tactical minimap">
             <div className="map-grid" />
             <span className="site site-a">A</span><span className="site site-b">B</span>
-            {snapshot.dots.filter((dot) => dot.alive && (dot.team === snapshot.team || dot.id === "you")).map((dot) => (
-              <i key={dot.id} className={`map-dot ${dot.id === "you" ? "you" : dot.team}`} style={{ left: `${((dot.x + 36) / 72) * 100}%`, top: `${((dot.z + 36) / 72) * 100}%` }} />
+            {snapshot.dots.filter((dot) => dot.alive && (snapshot.gameMode === "ffa" || dot.team === snapshot.team || dot.id === "you")).map((dot) => (
+              <i key={dot.id} className={`map-dot ${dot.id === "you" ? "you" : dot.team}`} style={{ left: `${((dot.x + 42) / 84) * 100}%`, top: `${((dot.z + 42) / 84) * 100}%` }} />
             ))}
-            <label>FOUNDRY</label>
+            <label>DUSTLINE</label>
           </aside>
 
           <div className="objective-chip"><span className={snapshot.bombPlanted ? "pulse" : ""}>{snapshot.bombPlanted ? "◆" : "◇"}</span><div><small>OBJECTIVE</small><strong>{snapshot.objective}</strong></div></div>
@@ -1965,12 +2170,12 @@ export function BreachlineGame() {
 
           {snapshot.actionText && <div className="action-progress"><strong>{snapshot.actionText}</strong><div><i style={{ width: `${snapshot.actionProgress * 100}%` }} /></div></div>}
           {snapshot.roundMessage && <div className="round-banner"><small>ROUND COMPLETE</small><strong>{snapshot.roundMessage}</strong></div>}
-          {!snapshot.alive && snapshot.phase !== "matchEnd" && <div className="eliminated"><span>ELIMINATED</span><strong>Round continues · Observe the outcome</strong></div>}
+          {!snapshot.alive && snapshot.phase !== "matchEnd" && <div className="eliminated"><span>ELIMINATED</span><strong>{snapshot.gameMode === "ffa" ? "Respawning in 2 seconds" : "Round continues · Observe the outcome"}</strong></div>}
 
           <div className="hud-bottom">
             <div className="vitals"><div><small>HEALTH</small><strong>{snapshot.health}</strong><i style={{ width: `${snapshot.health}%` }} /></div><div><small>ARMOR</small><strong>{snapshot.armor}</strong><i style={{ width: `${snapshot.armor}%` }} /></div></div>
-            <div className="status-center"><span className={snapshot.team}>{teamLabel}</span><strong>${snapshot.money.toLocaleString()}</strong><small>{snapshot.kills} K · {snapshot.deaths} D · {snapshot.ping} MS</small></div>
-            <div className="ammo"><small>{snapshot.weapon}</small><div><strong>{snapshot.ammo}</strong><span>/ {snapshot.reserve}</span></div><label>1 PRIMARY · 2 SIDEARM · 4 FRAG · 5 SMOKE</label></div>
+            <div className="status-center"><span className={snapshot.gameMode === "ffa" ? "attack" : snapshot.team}>{snapshot.gameMode === "ffa" ? "FREE FOR ALL" : teamLabel}</span><strong>{snapshot.gameMode === "ffa" ? `${snapshot.kills}/30` : `$${snapshot.money.toLocaleString()}`}</strong><small>{snapshot.kills} K · {snapshot.deaths} D · {snapshot.ping} MS</small></div>
+            <div className="ammo"><small>{snapshot.weapon}</small><div><strong>{snapshot.weaponId === "karambit" ? "—" : snapshot.ammo}</strong><span>{snapshot.weaponId === "karambit" ? "MELEE" : `/ ${snapshot.reserve}`}</span></div><label>1 AKM · 2 PISTOL · 3 KARAMBIT · F INSPECT</label></div>
           </div>
 
           <button className="hud-menu-button" aria-label="Pause" onClick={() => { setPaused(true); document.exitPointerLock?.(); }}>Ⅱ</button>
@@ -2011,20 +2216,22 @@ export function BreachlineGame() {
       {showScoreboard && screen === "game" && (
         <div className="modal-layer scoreboard-layer">
           <div className="scoreboard">
-            <header><div><small>DEMOLITION · FOUNDRY</small><h2>{snapshot.attackScore} <span>—</span> {snapshot.defendScore}</h2></div><strong>ROUND {snapshot.round}</strong></header>
-            {(["attack", "defend"] as Team[]).map((team) => <section key={team}><h3>{team === "attack" ? "STRIKERS" : "WARDENS"}</h3>{scoreboardGroups[team].map((player) => <div key={`${team}-${player.name}`} className={`${player.isPlayer ? "is-player" : ""} ${!player.alive ? "is-dead" : ""}`}><span className="status-dot" /><strong>{player.name}</strong><span>{player.kills} K</span><span>{player.deaths} D</span><span>{player.alive ? "ACTIVE" : "DOWN"}</span></div>)}</section>)}
+            <header><div><small>{snapshot.gameMode === "ffa" ? "FREE FOR ALL · DUSTLINE" : "DEMOLITION · DUSTLINE"}</small><h2>{snapshot.gameMode === "ffa" ? `${snapshot.kills} / 30` : <>{snapshot.attackScore} <span>—</span> {snapshot.defendScore}</>}</h2></div><strong>{snapshot.gameMode === "ffa" ? formatClock(snapshot.roundTime) : `ROUND ${snapshot.round}`}</strong></header>
+            {snapshot.gameMode === "ffa" ? (
+              <section className="ffa-board"><h3>ARENA RANKING · FIRST TO 30</h3>{ffaScoreboard.map((player, index) => <div key={`ffa-${player.name}`} className={`${player.isPlayer ? "is-player" : ""} ${!player.alive ? "is-dead" : ""}`}><span>{index + 1}</span><strong>{player.name}</strong><span>{player.kills} K</span><span>{player.deaths} D</span><span>{player.alive ? "ACTIVE" : "RESPAWNING"}</span></div>)}</section>
+            ) : (["attack", "defend"] as Team[]).map((team) => <section key={team}><h3>{team === "attack" ? "STRIKERS" : "WARDENS"}</h3>{scoreboardGroups[team].map((player) => <div key={`${team}-${player.name}`} className={`${player.isPlayer ? "is-player" : ""} ${!player.alive ? "is-dead" : ""}`}><span className="status-dot" /><strong>{player.name}</strong><span>{player.kills} K</span><span>{player.deaths} D</span><span>{player.alive ? "ACTIVE" : "DOWN"}</span></div>)}</section>)}
           </div>
         </div>
       )}
 
       {paused && screen === "game" && snapshot.phase !== "matchEnd" && (
         <div className="modal-layer pause-layer" role="dialog" aria-modal="true" aria-label="Pause menu">
-          <div className="pause-menu"><small>OPERATION PAUSED</small><h2>BREACHLINE</h2><button className="primary" onClick={() => { setPaused(false); engineRef.current?.resume(); }}>RESUME OPERATION</button><button onClick={() => setShowSettings(true)}>SETTINGS</button><button onClick={toggleFullscreen}>TOGGLE FULLSCREEN</button><button onClick={() => { setScreen("menu"); setPaused(false); }}>LEAVE MATCH</button><p>WASD move · Mouse aim · LMB fire · R reload<br />Shift sprint · Ctrl crouch · E interact · Tab scores</p></div>
+          <div className="pause-menu"><small>OPERATION PAUSED</small><h2>BREACHLINE</h2><button className="primary" onClick={() => { setPaused(false); engineRef.current?.resume(); }}>RESUME OPERATION</button><button onClick={() => setShowSettings(true)}>SETTINGS</button><button onClick={toggleFullscreen}>TOGGLE FULLSCREEN</button><button onClick={() => { setScreen("menu"); setPaused(false); }}>LEAVE MATCH</button><p>WASD move · Mouse aim · LMB fire · R reload<br />Hold Space bunny hop · 1/2/3 weapons · F inspect knife · Tab scores</p></div>
         </div>
       )}
 
       {snapshot.phase === "matchEnd" && screen === "game" && (
-        <div className="modal-layer result-layer"><div className="result-card"><small>OPERATION COMPLETE</small><h2>{snapshot.roundMessage}</h2><div><span><b>{snapshot.kills}</b> ELIMINATIONS</span><span><b>{snapshot.deaths}</b> DEATHS</span><span><b>{snapshot.attackScore}—{snapshot.defendScore}</b> FINAL</span></div><button onClick={() => startGame(false)}>PLAY AGAIN</button><button onClick={() => setScreen("menu")}>MAIN MENU</button></div></div>
+        <div className="modal-layer result-layer"><div className="result-card"><small>OPERATION COMPLETE</small><h2>{snapshot.roundMessage}</h2><div><span><b>{snapshot.kills}</b> ELIMINATIONS</span><span><b>{snapshot.deaths}</b> DEATHS</span><span><b>{snapshot.attackScore}—{snapshot.defendScore}</b> FINAL</span></div><button onClick={() => startGame(snapshot.gameMode)}>PLAY AGAIN</button><button onClick={() => setScreen("menu")}>MAIN MENU</button></div></div>
       )}
 
       {showSettings && (

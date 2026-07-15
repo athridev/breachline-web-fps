@@ -34,4 +34,20 @@
 - File used: `industrial_sunset_1k.hdr`
 - License: CC0 1.0 Universal / public domain dedication
 
+## Old Sandstone 02
+
+- Creator: Dimitrios Savva
+- Source: https://polyhaven.com/a/old_sandstone_02
+- Files used: 1K diffuse, OpenGL normal, and roughness JPG maps
+- License: CC0 1.0 Universal / public domain dedication
+- Usage: Dustline architectural walls and arches
+
+## Red Sandstone Pavement
+
+- Creator: Amal Kumar
+- Source: https://polyhaven.com/a/red_sandstone_pavement
+- Files used: 1K diffuse, OpenGL normal, and roughness JPG maps
+- License: CC0 1.0 Universal / public domain dedication
+- Usage: Dustline arena ground
+
 These assets have been integrated into Breachline's original game code, map, UI, effects, and materials. No Counter-Strike assets are included.
