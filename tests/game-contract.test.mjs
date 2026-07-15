@@ -29,6 +29,24 @@ test("uses textured masked tactical soldiers with a safe fallback", () => {
   assert.match(source, /soldierCosmetic/);
 });
 
+test("keeps the skyline clean and uses weapon-specific combat audio", () => {
+  assert.doesNotMatch(source, /new THREE\.ConeGeometry\(8 \+ \(i % 4\)/);
+  assert.match(source, /sound\(weapon\.id === "akm" \? "akmShot" : "pistolShot"\)/);
+  assert.match(source, /sound\(isHeadshot \? "headshot" : "hit"\)/);
+  assert.match(source, /playNoise\("highpass", 2700/);
+  assert.match(source, /playTone\("sine", 1880, 940/);
+});
+
+test("marks enemy tactical vests red in team modes and free for all", () => {
+  assert.match(source, /const isEnemy = freeForAllMode \|\| bot\.team !== playerTeam/);
+  assert.match(source, /isEnemy \? 0xc63d35 : 0x416a73/);
+  assert.match(source, /child\.userData\.vest = name === "vest"/);
+  assert.match(source, /const vestPlate = new THREE\.Mesh/);
+  assert.match(source, /const vestBack = vestPlate\.clone\(\)/);
+  assert.match(source, /child\.userData\.part = child\.userData\.vest \? "body" : "head"/);
+  assert.match(source, /updateBotVest\(bot\)/);
+});
+
 test("free-for-all remains fair and training remains reusable", () => {
   const names = source.match(/const BOT_NAMES = \[(.*?)\];/s)?.[1].match(/"[A-Z]+"/g) ?? [];
   assert.equal(names.length, 20);

@@ -515,16 +515,6 @@ export function BreachlineGame() {
       }
     }
 
-    const mountainMaterial = new THREE.MeshStandardMaterial({ color: 0x776a59, roughness: 1, flatShading: true });
-    for (let i = 0; i < 18; i++) {
-      const angle = (i / 18) * Math.PI * 2;
-      const radius = 60 + (i % 3) * 6;
-      const mountain = new THREE.Mesh(new THREE.ConeGeometry(8 + (i % 4) * 2.5, 14 + (i % 5) * 3, 7), mountainMaterial);
-      mountain.position.set(Math.cos(angle) * radius, 4 + (i % 2) * 2, Math.sin(angle) * radius);
-      mountain.rotation.y = angle * 1.7;
-      scene.add(mountain);
-    }
-
     const dustGeometry = new THREE.BufferGeometry();
     const dustPositions = new Float32Array(850 * 3);
     for (let i = 0; i < 850; i++) {
@@ -848,24 +838,121 @@ export function BreachlineGame() {
     });
 
     const audio = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const sound = (kind: "shot" | "hit" | "step" | "plant" | "explode" | "empty" | "slash") => {
-      if (settingsRef.current.volume <= 0 || audio.state === "suspended") return;
-      const osc = audio.createOscillator();
-      const gain = audio.createGain();
+    const sfxLimiter = audio.createDynamicsCompressor();
+    sfxLimiter.threshold.value = -14;
+    sfxLimiter.knee.value = 8;
+    sfxLimiter.ratio.value = 6;
+    sfxLimiter.attack.value = 0.002;
+    sfxLimiter.release.value = 0.13;
+    sfxLimiter.connect(audio.destination);
+
+    const noiseBuffer = audio.createBuffer(1, Math.ceil(audio.sampleRate * 0.6), audio.sampleRate);
+    const noiseData = noiseBuffer.getChannelData(0);
+    let brownNoise = 0;
+    for (let i = 0; i < noiseData.length; i++) {
+      const whiteNoise = Math.random() * 2 - 1;
+      brownNoise = (brownNoise + whiteNoise * 0.035) / 1.035;
+      noiseData[i] = THREE.MathUtils.clamp(whiteNoise * 0.72 + brownNoise * 1.7, -1, 1);
+    }
+
+    type SoundKind = "akmShot" | "pistolShot" | "botShot" | "hit" | "headshot" | "step" | "plant" | "explode" | "empty" | "slash";
+    const sound = (kind: SoundKind) => {
+      if (settingsRef.current.volume <= 0 || audio.state === "closed") return;
+      if (audio.state === "suspended") {
+        void audio.resume().then(() => sound(kind)).catch(() => undefined);
+        return;
+      }
       const now = audio.currentTime;
-      const config = {
-        shot: [92, 0.055, "sawtooth"], hit: [620, 0.045, "square"], step: [58, 0.03, "sine"],
-        plant: [880, 0.12, "square"], explode: [42, 0.32, "sawtooth"], empty: [210, 0.035, "square"], slash: [165, 0.075, "sawtooth"],
-      } as const;
-      const [frequency, duration, type] = config[kind];
-      osc.type = type;
-      osc.frequency.setValueAtTime(frequency, now);
-      osc.frequency.exponentialRampToValueAtTime(Math.max(20, frequency * 0.45), now + duration);
-      gain.gain.setValueAtTime(settingsRef.current.volume * (kind === "explode" ? 0.16 : 0.07), now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-      osc.connect(gain).connect(audio.destination);
-      osc.start(now);
-      osc.stop(now + duration);
+      const volume = settingsRef.current.volume;
+      const playNoise = (
+        filterType: BiquadFilterType,
+        frequency: number,
+        q: number,
+        duration: number,
+        level: number,
+        delay = 0,
+        playbackRate = 1,
+      ) => {
+        const source = audio.createBufferSource();
+        const filter = audio.createBiquadFilter();
+        const gain = audio.createGain();
+        const start = now + delay;
+        source.buffer = noiseBuffer;
+        source.playbackRate.value = playbackRate * (0.96 + Math.random() * 0.08);
+        filter.type = filterType;
+        filter.frequency.setValueAtTime(frequency * (0.94 + Math.random() * 0.12), start);
+        filter.Q.value = q;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.linearRampToValueAtTime(Math.max(0.0001, volume * level), start + 0.0015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+        source.connect(filter).connect(gain).connect(sfxLimiter);
+        source.start(start, Math.random() * 0.08);
+        source.stop(start + duration + 0.01);
+        source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
+      };
+      const playTone = (
+        type: OscillatorType,
+        startFrequency: number,
+        endFrequency: number,
+        duration: number,
+        level: number,
+        delay = 0,
+      ) => {
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        const start = now + delay;
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(startFrequency, start);
+        oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, endFrequency), start + duration);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.linearRampToValueAtTime(Math.max(0.0001, volume * level), start + 0.001);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+        oscillator.connect(gain).connect(sfxLimiter);
+        oscillator.start(start);
+        oscillator.stop(start + duration + 0.01);
+        oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+      };
+
+      if (kind === "akmShot") {
+        playNoise("highpass", 1100, 0.8, 0.055, 0.34);
+        playNoise("lowpass", 640, 0.7, 0.16, 0.24);
+        playTone("triangle", 122, 46, 0.15, 0.27);
+        playNoise("bandpass", 2550, 3.2, 0.022, 0.14, 0.004);
+        playNoise("bandpass", 720, 0.7, 0.28, 0.065, 0.018, 0.82);
+      } else if (kind === "pistolShot") {
+        playNoise("highpass", 1450, 0.8, 0.04, 0.3);
+        playNoise("lowpass", 980, 0.85, 0.1, 0.17);
+        playTone("triangle", 185, 78, 0.105, 0.18);
+        playNoise("bandpass", 3300, 4.2, 0.018, 0.13, 0.004, 1.12);
+        playNoise("bandpass", 1050, 0.8, 0.17, 0.045, 0.014, 0.94);
+      } else if (kind === "botShot") {
+        playNoise("bandpass", 920, 0.75, 0.085, 0.095);
+        playTone("triangle", 105, 48, 0.11, 0.055);
+        playNoise("lowpass", 520, 0.6, 0.18, 0.032, 0.012, 0.84);
+      } else if (kind === "headshot") {
+        playNoise("highpass", 2700, 0.7, 0.028, 0.19);
+        playNoise("bandpass", 1450, 5.5, 0.052, 0.11, 0.004, 1.16);
+        playTone("sine", 1880, 940, 0.074, 0.105, 0.002);
+        playTone("triangle", 540, 190, 0.052, 0.115);
+      } else if (kind === "hit") {
+        playNoise("bandpass", 1250, 3.8, 0.024, 0.055);
+        playTone("triangle", 720, 420, 0.034, 0.046);
+      } else if (kind === "step") {
+        playNoise("lowpass", 145, 0.7, 0.055, 0.032);
+        playTone("sine", 68, 42, 0.04, 0.022);
+      } else if (kind === "plant") {
+        playTone("square", 880, 620, 0.11, 0.05);
+      } else if (kind === "explode") {
+        playNoise("lowpass", 230, 0.55, 0.4, 0.22);
+        playNoise("bandpass", 680, 0.7, 0.24, 0.11, 0.005, 0.72);
+        playTone("sawtooth", 52, 22, 0.38, 0.14);
+      } else if (kind === "empty") {
+        playNoise("bandpass", 2850, 5, 0.022, 0.045);
+        playTone("square", 235, 145, 0.03, 0.028);
+      } else if (kind === "slash") {
+        playNoise("highpass", 850, 0.8, 0.11, 0.075, 0, 1.34);
+        playTone("triangle", 180, 86, 0.085, 0.035);
+      }
     };
 
     const createBotModel = (team: Team, id: string) => {
@@ -876,6 +963,7 @@ export function BreachlineGame() {
       const fabric = new THREE.MeshStandardMaterial({ color: 0x171d1c, roughness: 0.98, metalness: 0 });
       const webbing = new THREE.MeshStandardMaterial({ color: 0x252b28, roughness: 0.88, metalness: 0.05 });
       const armor = new THREE.MeshStandardMaterial({ color: 0x101617, roughness: 0.5, metalness: 0.42 });
+      const vestArmor = armor.clone();
       const metal = new THREE.MeshStandardMaterial({ color: 0x252d2f, roughness: 0.27, metalness: 0.86 });
       const skin = new THREE.MeshStandardMaterial({ color: 0x876852, roughness: 0.92 });
       const lens = new THREE.MeshPhysicalMaterial({ color: 0x1a4b58, emissive: 0x0d2730, emissiveIntensity: 0.34, metalness: 0.48, roughness: 0.07, transmission: 0.16, transparent: true, opacity: 0.93, clearcoat: 0.5 });
@@ -891,11 +979,13 @@ export function BreachlineGame() {
       abdomen.userData.uniform = true;
       const pelvis = new THREE.Mesh(new RoundedBoxGeometry(0.36, 0.2, 0.24, 3, 0.045), fabric);
       pelvis.position.y = 0.76;
-      const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.205, 0.17, 0.45, 12), armor);
+      const vest = new THREE.Mesh(new THREE.CylinderGeometry(0.205, 0.17, 0.45, 12), vestArmor);
       vest.scale.z = 0.62;
       vest.position.set(0, 1.23, -0.015);
-      const frontPlate = new THREE.Mesh(new RoundedBoxGeometry(0.29, 0.29, 0.035, 3, 0.012), armor);
+      vest.userData.vest = true;
+      const frontPlate = new THREE.Mesh(new RoundedBoxGeometry(0.29, 0.29, 0.035, 3, 0.012), vestArmor);
       frontPlate.position.set(0, 1.27, -0.145);
+      frontPlate.userData.vest = true;
       const belt = new THREE.Mesh(new RoundedBoxGeometry(0.37, 0.075, 0.25, 2, 0.015), webbing);
       belt.position.set(0, 0.82, -0.01);
       const backpack = new THREE.Mesh(new RoundedBoxGeometry(0.31, 0.4, 0.13, 3, 0.03), fabric);
@@ -1077,6 +1167,7 @@ export function BreachlineGame() {
           });
           child.material = Array.isArray(child.material) ? cloned : cloned[0];
           child.userData.uniform = name === "arms" || name === "legs";
+          child.userData.vest = name === "vest";
           child.castShadow = true;
           child.receiveShadow = true;
         });
@@ -1087,18 +1178,28 @@ export function BreachlineGame() {
         const goggleLensMaterial = new THREE.MeshPhysicalMaterial({ color: 0x174c5c, emissive: 0x09262f, emissiveIntensity: 0.32, roughness: 0.06, metalness: 0.42, clearcoat: 0.5 });
         const goggleA = new THREE.Mesh(new RoundedBoxGeometry(0.062, 0.032, 0.011, 3, 0.007), goggleLensMaterial);
         const goggleB = goggleA.clone();
+        const vestPlate = new THREE.Mesh(
+          new RoundedBoxGeometry(0.3, 0.31, 0.038, 3, 0.012),
+          new THREE.MeshStandardMaterial({ color: 0xc63d35, roughness: 0.62, metalness: 0.18 }),
+        );
+        const vestBack = vestPlate.clone();
         goggleFrame.position.set(0, 1.665, -0.147);
         goggleA.position.set(-0.043, 1.665, -0.162);
         goggleB.position.set(0.043, 1.665, -0.162);
-        gear.add(goggleFrame, goggleA, goggleB);
+        vestPlate.position.set(0, 1.2, -0.17);
+        vestBack.position.set(0, 1.2, 0.13);
+        vestPlate.userData.vest = true;
+        vestBack.userData.vest = true;
+        gear.add(goggleFrame, goggleA, goggleB, vestPlate, vestBack);
         gear.traverse((child) => {
           child.userData.botId = bot.id;
-          child.userData.part = "head";
+          child.userData.part = child.userData.vest ? "body" : "head";
           if (child instanceof THREE.Mesh) child.castShadow = true;
         });
         bot.root.userData.soldierCosmetic = soldier;
         bot.root.userData.soldierGear = gear;
         bot.root.add(soldier, gear);
+        updateBotVest(bot);
       });
     });
 
@@ -1248,6 +1349,21 @@ export function BreachlineGame() {
       bots.forEach((bot) => { bot.skill = skill + (Math.random() - 0.5) * 0.12; });
     };
 
+    const updateBotVest = (bot: Bot) => {
+      const isEnemy = freeForAllMode || bot.team !== playerTeam;
+      bot.root.traverse((child) => {
+        if (!child.userData.vest || !(child instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        materials.forEach((material) => {
+          const tacticalMaterial = material as THREE.MeshStandardMaterial;
+          tacticalMaterial.color.setHex(isEnemy ? 0xc63d35 : 0x416a73);
+          tacticalMaterial.emissive?.setHex(isEnemy ? 0x220504 : 0x031417);
+          tacticalMaterial.emissiveIntensity = isEnemy ? 0.14 : 0.06;
+          tacticalMaterial.needsUpdate = true;
+        });
+      });
+    };
+
     const beginRound = () => {
       roundEndQueued = false;
       playerTeam = trainingMode ? "attack" : roundNumber <= 6 ? "attack" : "defend";
@@ -1292,6 +1408,7 @@ export function BreachlineGame() {
             (child.material as THREE.MeshStandardMaterial).color.copy(freeForAllMode ? ffaColor : new THREE.Color(bot.team === "attack" ? 0x65402f : 0x2d4e58));
           }
         });
+        updateBotVest(bot);
         bot.health = 100;
         bot.alive = active;
         bot.root.visible = active;
@@ -1385,12 +1502,12 @@ export function BreachlineGame() {
       }
     };
 
-    const damageBot = (bot: Bot, damage: number, attackerName: string, weapon: string, attackerTeam: Team, hitDirection?: THREE.Vector3) => {
+    const damageBot = (bot: Bot, damage: number, attackerName: string, weapon: string, attackerTeam: Team, hitDirection?: THREE.Vector3, isHeadshot = false) => {
       if (!bot.alive) return;
       bot.health -= damage;
       if (attackerName === "YOU") {
         hitMarkerUntil = performance.now() + 110;
-        sound("hit");
+        sound(isHeadshot ? "headshot" : "hit");
       }
       if (bot.health <= 0) {
         bot.alive = false;
@@ -1528,7 +1645,7 @@ export function BreachlineGame() {
       muzzleFlash.visible = true;
       muzzleFlash.rotation.z = Math.random() * Math.PI;
       window.setTimeout(() => { muzzle.intensity = 0; muzzleFlash.visible = false; }, 38);
-      sound("shot");
+      sound(weapon.id === "akm" ? "akmShot" : "pistolShot");
       spawnCasing();
 
       const pellets = weapon.pellets ?? 1;
@@ -1554,7 +1671,7 @@ export function BreachlineGame() {
           const bot = bots.find((b) => b.id === botId);
           if (bot) {
             const headshot = botHit.object.userData.part === "head";
-            damageBot(bot, weapon.damage * (headshot ? 2.3 : 1), "YOU", weapon.short, playerTeam, direction);
+            damageBot(bot, weapon.damage * (headshot ? 2.3 : 1), "YOU", weapon.short, playerTeam, direction, headshot);
             spawnImpact(botHit.point, headshot ? 0xff4d32 : 0xffa95a);
           }
         } else if (wallHit) {
@@ -1761,7 +1878,7 @@ export function BreachlineGame() {
             const hitChance = clamp(bot.skill * (1 - distance / 70), 0.16, 0.82);
             const shotEnd = targetEye.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.42, (Math.random() - 0.5) * 0.35, (Math.random() - 0.5) * 0.42));
             spawnTracer(botEye, shotEnd, 0xff9a55);
-            if (distance < 24) sound("shot");
+            if (distance < 24) sound("botShot");
             if (Math.random() < hitChance) {
               if (target.player) damagePlayer(9 + Math.random() * 13, bot);
               else if (target.bot) damageBot(target.bot, 11 + Math.random() * 15, bot.name, "AKM", bot.team, target.bot.root.position.clone().sub(bot.root.position).normalize());
@@ -2344,7 +2461,7 @@ export function BreachlineGame() {
           <div className="menu-art" style={{ backgroundImage: "url('./menu-hero.png')" }} />
           <div className="menu-shade" />
           <header className="menu-topbar">
-            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.3 · DUSTLINE</small></div>
+            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.4 · DUSTLINE</small></div>
             <div className="career-strip"><span>CAREER</span><strong>{stats.wins}W</strong><span>{stats.matches} MATCHES</span><span>{stats.eliminations} ELIMS</span></div>
           </header>
           <div className="menu-content">
