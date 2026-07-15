@@ -58,6 +58,7 @@ type Snapshot = {
   kills: number;
   deaths: number;
   ping: number;
+  spawnProtected: boolean;
 };
 
 type Weapon = {
@@ -117,14 +118,18 @@ const initialSnapshot: Snapshot = {
   kills: 0,
   deaths: 0,
   ping: 24,
+  spawnProtected: false,
 };
 
 type EngineApi = {
   start: (difficulty: Difficulty, mode: GameMode) => void;
+  pause: (paused: boolean) => void;
   resume: () => void;
+  stop: () => void;
   buy: (id: string) => boolean;
   buyArmor: () => boolean;
   setWeapon: (slot: 1 | 2 | 3) => void;
+  cycleWeapon: () => void;
   throwGrenade: (kind: "frag" | "smoke") => void;
   setBuyMenu: (open: boolean) => void;
   setTouch: (key: string, down: boolean) => void;
@@ -336,13 +341,11 @@ export function BreachlineGame() {
       const isMetal = metal > 0.5;
       const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(color).lerp(new THREE.Color(isMetal ? 0xb9b9b2 : 0xd7d2c8), 0.68),
-        map: isMetal ? metalTexture : concreteTexture,
-        bumpMap: isMetal ? metalBump : undefined,
-        normalMap: isMetal ? undefined : concreteNormal,
-        roughnessMap: isMetal ? undefined : concreteRough,
-        bumpScale: isMetal ? 0.09 : 0,
         roughness: isMetal ? 0.48 : 0.86,
         metalness: isMetal ? 0.68 : 0.05,
+        ...(isMetal
+          ? { map: metalTexture, bumpMap: metalBump, bumpScale: 0.09 }
+          : { map: concreteTexture, normalMap: concreteNormal, roughnessMap: concreteRough }),
       });
       const radius = Math.min(0.11, w * 0.025, d * 0.025, h * 0.025);
       const mesh = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 2, radius), material);
@@ -596,30 +599,36 @@ export function BreachlineGame() {
       if (weapon.id === "karambit") {
         const knife = new THREE.Group();
         const bladeMaterial = new THREE.MeshPhysicalMaterial({ color: 0x9ca9ad, roughness: 0.16, metalness: 0.96, clearcoat: 0.28, clearcoatRoughness: 0.18, envMapIntensity: 1.65 });
-        const edgeMaterial = new THREE.MeshPhysicalMaterial({ color: 0xd7e2e2, roughness: 0.1, metalness: 1, clearcoat: 0.35 });
         const gripMaterial = new THREE.MeshStandardMaterial({ color: 0x101718, roughness: 0.48, metalness: 0.34 });
-        const blade = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.052, 7, 34, Math.PI * 1.34), bladeMaterial);
-        blade.rotation.set(Math.PI / 2, 0.2, -0.42);
-        blade.position.set(-0.065, 0.045, -0.37);
+        const bladeShape = new THREE.Shape();
+        bladeShape.moveTo(0.11, 0.07);
+        bladeShape.bezierCurveTo(-0.07, 0.09, -0.29, 0.22, -0.35, 0.37);
+        bladeShape.bezierCurveTo(-0.24, 0.3, -0.06, 0.205, 0.1, 0.18);
+        bladeShape.quadraticCurveTo(0.14, 0.13, 0.11, 0.07);
+        const bladeGeometry = new THREE.ExtrudeGeometry(bladeShape, { depth: 0.036, bevelEnabled: true, bevelSegments: 3, bevelSize: 0.012, bevelThickness: 0.01, curveSegments: 18 });
+        const blade = new THREE.Mesh(bladeGeometry, bladeMaterial);
         knife.add(blade);
-        const edge = new THREE.Mesh(new THREE.TorusGeometry(0.273, 0.012, 5, 34, Math.PI * 1.18), edgeMaterial);
-        edge.rotation.copy(blade.rotation);
-        edge.position.copy(blade.position).add(new THREE.Vector3(-0.006, 0.008, -0.012));
+        const edge = new THREE.LineSegments(new THREE.EdgesGeometry(bladeGeometry, 24), new THREE.LineBasicMaterial({ color: 0xe7f0ef, transparent: true, opacity: 0.72 }));
         knife.add(edge);
-        const handle = new THREE.Mesh(new RoundedBoxGeometry(0.115, 0.105, 0.34, 4, 0.025), gripMaterial);
-        handle.position.set(0.075, -0.04, -0.08);
-        handle.rotation.set(-0.12, -0.24, 0.18);
+        const handle = new THREE.Mesh(new RoundedBoxGeometry(0.13, 0.38, 0.085, 4, 0.026), gripMaterial);
+        handle.position.set(0.12, -0.105, 0.028);
+        handle.rotation.z = -0.12;
         knife.add(handle);
-        for (const offset of [-0.09, 0, 0.09]) {
-          const groove = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.012, 5, 14, Math.PI), accent);
-          groove.rotation.set(Math.PI / 2, 0, Math.PI / 2);
-          groove.position.set(0.075, -0.017, -0.08 + offset);
+        for (const offset of [-0.12, -0.035, 0.05]) {
+          const groove = new THREE.Mesh(new RoundedBoxGeometry(0.14, 0.022, 0.095, 2, 0.008), accent);
+          groove.position.set(0.12, offset, 0.028);
+          groove.rotation.z = -0.12;
           knife.add(groove);
         }
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.029, 10, 28), bladeMaterial);
-        ring.position.set(0.075, -0.03, 0.125);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.078, 0.02, 10, 30), bladeMaterial);
+        ring.position.set(0.145, -0.345, 0.028);
         knife.add(ring);
-        knife.rotation.set(0.08, -0.12, -0.18);
+        const pommel = new THREE.Mesh(new RoundedBoxGeometry(0.11, 0.07, 0.09, 3, 0.018), bladeMaterial);
+        pommel.position.set(0.138, -0.275, 0.028);
+        pommel.rotation.z = -0.12;
+        knife.add(pommel);
+        knife.scale.setScalar(0.48);
+        knife.rotation.set(-0.08, -0.28, -0.32);
         knife.traverse((child) => { if (child instanceof THREE.Mesh) child.castShadow = true; });
         addObject(knife);
       } else if (model) {
@@ -770,7 +779,7 @@ export function BreachlineGame() {
       const bounds = new THREE.Box3().setFromObject(object);
       const center = bounds.getCenter(new THREE.Vector3());
       object.position.sub(center);
-      object.rotation.x = -Math.PI / 2;
+      object.rotation.x = Math.PI / 2;
       const wrapper = new THREE.Group();
       wrapper.userData.detailedViewmodel = true;
       wrapper.userData.viewScale = 0.055;
@@ -953,6 +962,7 @@ export function BreachlineGame() {
     }
 
     let screenActive = false;
+    let simulationPaused = true;
     let gameMode: GameMode = "demolition";
     let trainingMode = false;
     let freeForAllMode = false;
@@ -993,6 +1003,7 @@ export function BreachlineGame() {
     let playerDeathTime = 0;
     let playerDeathStartY = 1.68;
     let playerDeathRoll = 0;
+    let playerProtectedUntil = 0;
     let stepTimer = 0;
     let actionProgress = 0;
     let actionText = "";
@@ -1106,7 +1117,7 @@ export function BreachlineGame() {
       playerHealth = 100;
       playerAlive = true;
       playerArmor = freeForAllMode ? 100 : Math.min(playerArmor, 100);
-      playerCarryingBomb = !freeForAllMode && playerTeam === "attack";
+      playerCarryingBomb = !freeForAllMode && !trainingMode && playerTeam === "attack";
       bombPlanted = false;
       bombSite = null;
       bombTime = 38;
@@ -1261,6 +1272,7 @@ export function BreachlineGame() {
           }
         }
         if (freeForAllMode) bot.respawnAt = performance.now() / 1000 + 2.2;
+        else if (trainingMode) bot.respawnAt = performance.now() / 1000 + 1.25;
         if (bot.carryingBomb) {
           const nextCarrier = bots.find((b) => b.team === "attack" && b.alive);
           if (nextCarrier) nextCarrier.carryingBomb = true;
@@ -1270,6 +1282,7 @@ export function BreachlineGame() {
 
     const damagePlayer = (damage: number, attacker: Bot) => {
       if (!playerAlive) return;
+      if (freeForAllMode && performance.now() / 1000 < playerProtectedUntil) return;
       const absorbed = Math.min(playerArmor, damage * 0.42);
       playerArmor -= absorbed;
       playerHealth -= damage - absorbed;
@@ -1504,7 +1517,8 @@ export function BreachlineGame() {
         const dist = bot.root.position.distanceTo(opponent.root.position);
         if (dist < best) { best = dist; target = { position: opponent.root.position, bot: opponent }; }
       }
-      if (playerAlive && (freeForAllMode || playerTeam !== bot.team)) {
+      const playerTargetable = !freeForAllMode || performance.now() / 1000 >= playerProtectedUntil;
+      if (playerAlive && playerTargetable && (freeForAllMode || playerTeam !== bot.team)) {
         const dist = bot.root.position.distanceTo(camera.position);
         if (dist < best) target = { position: camera.position, player: true };
       }
@@ -1514,15 +1528,15 @@ export function BreachlineGame() {
     const updateBots = (dt: number) => {
       for (const bot of bots) {
         if (bot.alive || bot.deathTime < 0 || !bot.root.visible) continue;
-        if (freeForAllMode && bot.respawnAt > 0 && performance.now() / 1000 >= bot.respawnAt) {
+        if ((freeForAllMode || trainingMode) && bot.respawnAt > 0 && performance.now() / 1000 >= bot.respawnAt) {
           bot.health = 100;
           bot.alive = true;
           bot.deathTime = -1;
           bot.respawnAt = 0;
-          bot.root.position.copy(nextFfaSpawn());
+          bot.root.position.copy(freeForAllMode ? nextFfaSpawn() : bot.destination);
           bot.root.quaternion.identity();
           bot.root.rotation.y = Math.random() * Math.PI * 2;
-          bot.destination.copy(nextFfaSpawn());
+          if (freeForAllMode) bot.destination.copy(nextFfaSpawn());
           bot.fireCooldown = 0.8 + Math.random() * 0.6;
           const legA = bot.root.userData.legA as THREE.Mesh;
           const legB = bot.root.userData.legB as THREE.Mesh;
@@ -1564,6 +1578,12 @@ export function BreachlineGame() {
         const legB = bot.root.userData.legB as THREE.Mesh;
         const armA = bot.root.userData.armA as THREE.Mesh;
         const armB = bot.root.userData.armB as THREE.Mesh;
+        if (trainingMode) {
+          const idle = Math.sin(performance.now() * 0.002 + Number(bot.id.split("-")[1])) * 0.035;
+          armA.rotation.x = -0.82 + idle;
+          armB.rotation.x = -1.02 - idle;
+          continue;
+        }
         bot.fireCooldown -= dt;
         bot.decisionCooldown -= dt;
         const target = pickBotTarget(bot);
@@ -1646,7 +1666,7 @@ export function BreachlineGame() {
 
     const updateObjective = (dt: number) => {
       actionText = "";
-      if (freeForAllMode || phase !== "live" || !playerAlive) return;
+      if (freeForAllMode || trainingMode || phase !== "live" || !playerAlive) return;
       const interacting = keys.has("KeyE") || touchKeys.has("interact");
       let canAct = false;
       if (playerTeam === "attack" && playerCarryingBomb && !bombPlanted) {
@@ -1702,6 +1722,7 @@ export function BreachlineGame() {
       const forwardInput = (keys.has("KeyW") || touchKeys.has("forward") ? 1 : 0) - (keys.has("KeyS") || touchKeys.has("back") ? 1 : 0);
       const sideInput = (keys.has("KeyD") || touchKeys.has("right") ? 1 : 0) - (keys.has("KeyA") || touchKeys.has("left") ? 1 : 0);
       const crouched = keys.has("ControlLeft") || touchKeys.has("crouch");
+      const jumpHeld = keys.has("Space") || touchKeys.has("jump");
       const sprinting = (keys.has("ShiftLeft") || touchKeys.has("sprint")) && forwardInput > 0 && !crouched;
       const speed = sprinting ? 7.3 : crouched ? 2.8 : 5.2;
       const airborne = jumpHeight > 0.01 || jumpVelocity > 0.01;
@@ -1728,7 +1749,7 @@ export function BreachlineGame() {
       if (jumpHeight < 0) {
         jumpHeight = 0;
         jumpVelocity = 0;
-        if (keys.has("Space") && playerAlive && !crouched) {
+        if (jumpHeld && playerAlive && !crouched) {
           jumpHeight = 0.002;
           jumpVelocity = 5.05;
           const hopSpeed = velocity.length();
@@ -1747,8 +1768,9 @@ export function BreachlineGame() {
       const inspectSpin = inspecting ? (1 - Math.cos(inspectT * Math.PI * 2)) * Math.PI : 0;
       const walkX = moving ? Math.sin(bob * 0.5) * 0.018 : 0;
       const walkY = moving ? Math.abs(Math.sin(bob)) * 0.014 : 0;
-      const baseX = aiming ? 0 : weaponId === "akm" ? 0.35 : weaponId === "karambit" ? 0.29 : 0.31;
-      const baseY = aiming ? -0.285 : weaponId === "karambit" ? -0.25 : -0.3;
+      const viewmodelAspect = clamp(camera.aspect / 1.2, 0.52, 1);
+      const baseX = (aiming ? 0 : weaponId === "akm" ? 0.35 : weaponId === "karambit" ? 0.26 : 0.31) * viewmodelAspect;
+      const baseY = aiming ? -0.285 : weaponId === "karambit" ? -0.04 : -0.3;
       const baseZ = aiming ? (weaponId === "akm" ? -0.45 : -0.43) : weaponId === "akm" ? -0.59 : weaponId === "karambit" ? -0.48 : -0.56;
       gun.position.x = THREE.MathUtils.lerp(gun.position.x, baseX + walkX + viewmodelSwayX - inspectArc * 0.14, dt * 11);
       gun.position.y = THREE.MathUtils.lerp(gun.position.y, baseY + walkY + recoil * 0.38 + viewmodelSwayY - reloadPose * 0.09 + inspectArc * 0.12, dt * 12);
@@ -1764,7 +1786,7 @@ export function BreachlineGame() {
     const publishSnapshot = () => {
       const current = currentWeapon();
       const mag = ammo[current.id] ?? { clip: 0, reserve: 0 };
-      const objective = freeForAllMode ? "Free for all · First operator to 30 eliminations" : phase === "buy" ? "Buy phase · Prepare your loadout" : bombPlanted ? `${bombSite} site · Charge armed` : playerTeam === "attack" ? "Plant the charge at A or B" : "Defend both objective sites";
+      const objective = freeForAllMode ? "Free for all · First operator to 30 eliminations" : trainingMode ? "Training range · Four targets respawn automatically" : phase === "buy" ? "Buy phase · Prepare your loadout" : bombPlanted ? `${bombSite} site · Charge armed` : playerTeam === "attack" ? "Plant the charge at A or B" : "Defend both objective sites";
       const visibleBots = bots.filter((bot) => bot.root.visible);
       const playerRows: PlayerRow[] = [
         { name: "YOU", team: playerTeam, kills: playerKills, deaths: playerDeaths, alive: playerAlive, isPlayer: true },
@@ -1782,6 +1804,7 @@ export function BreachlineGame() {
         ],
         players: playerRows, roundMessage, hitMarker: performance.now() < hitMarkerUntil, kills: playerKills, deaths: playerDeaths,
         ping: 18 + Math.floor(Math.random() * 9),
+        spawnProtected: freeForAllMode && playerAlive && performance.now() / 1000 < playerProtectedUntil,
       });
     };
 
@@ -1799,6 +1822,7 @@ export function BreachlineGame() {
       velocity.set(0, 0, 0);
       gun.visible = true;
       gun.rotation.set(0, 0, 0);
+      playerProtectedUntil = performance.now() / 1000 + 2;
       const akAmmo = ammo.akm;
       if (akAmmo) { akAmmo.clip = WEAPONS.akm.magazine; akAmmo.reserve = WEAPONS.akm.reserve; }
       const pistolAmmo = ammo.v9;
@@ -1819,6 +1843,10 @@ export function BreachlineGame() {
           }
         }
       } else if (phase === "live") {
+        if (trainingMode) {
+          roundTime = 5999;
+          return;
+        }
         if (freeForAllMode) {
           roundTime -= dt;
           if (!playerAlive && playerDeathTime >= 2.15) respawnPlayerFreeForAll();
@@ -1854,7 +1882,7 @@ export function BreachlineGame() {
     };
 
     const onMouseMove = (event: MouseEvent) => {
-      if (document.pointerLockElement !== renderer.domElement || !screenActive) return;
+      if (document.pointerLockElement !== renderer.domElement || !screenActive || simulationPaused) return;
       const sensitivity = settingsRef.current.sensitivity * 0.0019;
       yaw -= event.movementX * sensitivity;
       pitch = clamp(pitch - event.movementY * sensitivity, -1.34, 1.34);
@@ -1862,7 +1890,7 @@ export function BreachlineGame() {
       viewmodelSwayY = clamp(viewmodelSwayY - event.movementY * 0.00018, -0.026, 0.026);
     };
     const onMouseDown = (event: MouseEvent) => {
-      if (!screenActive) return;
+      if (!screenActive || simulationPaused) return;
       if (document.pointerLockElement !== renderer.domElement) {
         lockPointer();
         audio.resume();
@@ -1876,6 +1904,15 @@ export function BreachlineGame() {
     const onMouseUp = (event: MouseEvent) => { if (event.button === 0) firing = false; if (event.button === 2) aiming = false; };
     const onContextMenu = (event: MouseEvent) => event.preventDefault();
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Escape" && screenActive) {
+        simulationPaused = true;
+        firing = false;
+        keys.clear();
+        touchKeys.clear();
+        setPaused(true);
+        return;
+      }
+      if (simulationPaused) return;
       keys.add(event.code);
       if (event.code === "KeyR") reload();
       if (event.code === "Space" && jumpHeight <= 0.01 && playerAlive) { jumpHeight = 0.002; jumpVelocity = 5.05; }
@@ -1894,7 +1931,6 @@ export function BreachlineGame() {
           document.exitPointerLock?.();
         }
       }
-      if (event.code === "Escape" && screenActive) setPaused(true);
     };
     const onKeyUp = (event: KeyboardEvent) => {
       keys.delete(event.code);
@@ -1903,8 +1939,14 @@ export function BreachlineGame() {
     };
     const onPointerLock = () => {
       if (intentionalUnlock) { intentionalUnlock = false; setPaused(false); return; }
-      if (screenActive && document.pointerLockElement !== renderer.domElement && phase !== "matchEnd") setPaused(true);
-      else setPaused(false);
+      const shouldPause = screenActive && document.pointerLockElement !== renderer.domElement && phase !== "matchEnd";
+      simulationPaused = shouldPause;
+      if (shouldPause) {
+        firing = false;
+        keys.clear();
+        touchKeys.clear();
+      }
+      setPaused(shouldPause);
     };
     const onResize = () => {
       const width = mount.clientWidth;
@@ -1928,6 +1970,7 @@ export function BreachlineGame() {
     engineRef.current = {
       start: (selectedDifficulty, mode) => {
         screenActive = true;
+        simulationPaused = false;
         buyOpen = false;
         setShowBuy(false);
         gameMode = mode;
@@ -1950,12 +1993,30 @@ export function BreachlineGame() {
         bots.forEach((bot) => { bot.kills = 0; bot.deaths = 0; });
         setDifficulty(selectedDifficulty);
         beginRound();
+        playerProtectedUntil = freeForAllMode ? performance.now() / 1000 + 2 : 0;
         audio.resume();
       },
-      resume: () => { audio.resume(); lockPointer(); },
+      pause: (paused) => {
+        simulationPaused = paused;
+        if (paused) {
+          firing = false;
+          keys.clear();
+          touchKeys.clear();
+        }
+      },
+      resume: () => { simulationPaused = false; audio.resume(); lockPointer(); },
+      stop: () => {
+        screenActive = false;
+        simulationPaused = true;
+        firing = false;
+        aiming = false;
+        keys.clear();
+        touchKeys.clear();
+      },
       buy,
       buyArmor,
       setWeapon: (slot) => equip(slot === 1 ? (primaryId ?? "v9") : slot === 2 ? "v9" : "karambit"),
+      cycleWeapon: () => equip(weaponId === "karambit" ? (primaryId ?? "v9") : weaponId === "v9" ? "karambit" : "v9"),
       throwGrenade: trackedThrowGrenade,
       setBuyMenu: (open) => {
         buyOpen = open;
@@ -1967,6 +2028,7 @@ export function BreachlineGame() {
       },
       setTouch: (key, down) => {
         if (down) touchKeys.add(key); else touchKeys.delete(key);
+        if (down && key === "jump" && jumpHeight <= 0.01 && playerAlive) { jumpHeight = 0.002; jumpVelocity = 5.05; }
         if (!down && key === "interact") actionProgress = 0;
       },
       setFire: (down) => { firing = down; if (down) fireShot(); },
@@ -1982,6 +2044,10 @@ export function BreachlineGame() {
       raf = requestAnimationFrame(animate);
       timer.update();
       const dt = Math.min(timer.getDelta(), 0.05);
+      if (!screenActive || simulationPaused) {
+        composer.render(0);
+        return;
+      }
       updateRound(dt);
       updatePlayer(dt);
       updateBots(dt);
@@ -2063,6 +2129,16 @@ export function BreachlineGame() {
     window.setTimeout(() => engineRef.current?.start(mode === "training" ? "recruit" : difficulty, mode), 0);
   }, [difficulty]);
 
+  const leaveGame = useCallback(() => {
+    engineRef.current?.stop();
+    setScreen("menu");
+    setPaused(false);
+    setShowBuy(false);
+    setShowScoreboard(false);
+    setShowSettings(false);
+    document.exitPointerLock?.();
+  }, []);
+
   const buyItem = (id: string) => {
     const ok = id === "armor" ? engineRef.current?.buyArmor() : engineRef.current?.buy(id);
     setToast(ok ? `${id === "armor" ? "Armor" : WEAPONS[id].label} equipped` : "Unavailable or insufficient funds");
@@ -2105,7 +2181,7 @@ export function BreachlineGame() {
           <div className="menu-art" style={{ backgroundImage: "url('./menu-hero.png')" }} />
           <div className="menu-shade" />
           <header className="menu-topbar">
-            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.1 · DUSTLINE</small></div>
+            <div className="brand-lockup"><span className="brand-mark">B</span><span>BREACHLINE</span><small>v1.2 · DUSTLINE</small></div>
             <div className="career-strip"><span>CAREER</span><strong>{stats.wins}W</strong><span>{stats.matches} MATCHES</span><span>{stats.eliminations} ELIMS</span></div>
           </header>
           <div className="menu-content">
@@ -2140,6 +2216,12 @@ export function BreachlineGame() {
                 <div className="round-clock"><span>FREE FOR ALL · FIRST TO 30</span><strong>{formatClock(snapshot.roundTime)}</strong><small>20 BOT ARENA · LIVE</small></div>
                 <div className="team-panel enemy defend"><strong>{snapshot.defendScore}</strong><small>BOT LEADER</small><span>{snapshot.players.filter((player) => player.alive).length} ACTIVE</span></div>
               </>
+            ) : snapshot.gameMode === "training" ? (
+              <>
+                <div className="team-panel friendly attack"><small>TRAINING</small><strong>{snapshot.kills}</strong><span>ELIMINATIONS</span></div>
+                <div className="round-clock"><span>TRAINING RANGE</span><strong>∞</strong><small>LIVE FIRE DRILL</small></div>
+                <div className="team-panel enemy defend"><strong>{snapshot.players.filter((player) => !player.isPlayer && player.alive).length}</strong><small>TARGETS</small><span>AUTO RESPAWN</span></div>
+              </>
             ) : (
               <>
                 <div className={`team-panel ${snapshot.team === "attack" ? "friendly attack" : "friendly defend"}`}><small>{teamLabel}</small><strong>{scoreLeft}</strong><span>{snapshot.team === "attack" ? aliveAttack : aliveDefend} ALIVE</span></div>
@@ -2163,6 +2245,7 @@ export function BreachlineGame() {
           </aside>
 
           <div className="objective-chip"><span className={snapshot.bombPlanted ? "pulse" : ""}>{snapshot.bombPlanted ? "◆" : "◇"}</span><div><small>OBJECTIVE</small><strong>{snapshot.objective}</strong></div></div>
+          {snapshot.spawnProtected && <div className="spawn-shield"><span>⬡</span> SPAWN PROTECTION</div>}
 
           <div className="killfeed">{snapshot.feed.map((item) => <div key={item.id}><span>{item.killer}</span><b>{item.weapon}</b><span className={item.friendly ? "friendly-fire" : ""}>{item.victim}</span></div>)}</div>
 
@@ -2174,11 +2257,11 @@ export function BreachlineGame() {
 
           <div className="hud-bottom">
             <div className="vitals"><div><small>HEALTH</small><strong>{snapshot.health}</strong><i style={{ width: `${snapshot.health}%` }} /></div><div><small>ARMOR</small><strong>{snapshot.armor}</strong><i style={{ width: `${snapshot.armor}%` }} /></div></div>
-            <div className="status-center"><span className={snapshot.gameMode === "ffa" ? "attack" : snapshot.team}>{snapshot.gameMode === "ffa" ? "FREE FOR ALL" : teamLabel}</span><strong>{snapshot.gameMode === "ffa" ? `${snapshot.kills}/30` : `$${snapshot.money.toLocaleString()}`}</strong><small>{snapshot.kills} K · {snapshot.deaths} D · {snapshot.ping} MS</small></div>
+            <div className="status-center"><span className={snapshot.gameMode === "ffa" ? "attack" : snapshot.team}>{snapshot.gameMode === "ffa" ? "FREE FOR ALL" : snapshot.gameMode === "training" ? "TRAINING" : teamLabel}</span><strong>{snapshot.gameMode === "ffa" ? `${snapshot.kills}/30` : `$${snapshot.money.toLocaleString()}`}</strong><small>{snapshot.kills} K · {snapshot.deaths} D · {snapshot.ping} MS</small></div>
             <div className="ammo"><small>{snapshot.weapon}</small><div><strong>{snapshot.weaponId === "karambit" ? "—" : snapshot.ammo}</strong><span>{snapshot.weaponId === "karambit" ? "MELEE" : `/ ${snapshot.reserve}`}</span></div><label>1 AKM · 2 PISTOL · 3 KARAMBIT · F INSPECT</label></div>
           </div>
 
-          <button className="hud-menu-button" aria-label="Pause" onClick={() => { setPaused(true); document.exitPointerLock?.(); }}>Ⅱ</button>
+          <button className="hud-menu-button" aria-label="Pause" onClick={() => { engineRef.current?.pause(true); setPaused(true); document.exitPointerLock?.(); }}>Ⅱ</button>
           {snapshot.phase === "buy" && <button className="buy-hint" onClick={() => engineRef.current?.setBuyMenu(true)}><kbd>B</kbd> OPEN BUY MENU</button>}
           {toast && <div className="toast">{toast}</div>}
 
@@ -2189,7 +2272,7 @@ export function BreachlineGame() {
               <button onPointerDown={() => touch("back", true)} onPointerUp={() => touch("back", false)} onPointerCancel={() => touch("back", false)}>▼</button>
               <button onPointerDown={() => touch("right", true)} onPointerUp={() => touch("right", false)} onPointerCancel={() => touch("right", false)}>▶</button>
             </div>
-            <div className="mobile-actions"><button className="mobile-fire" onPointerDown={() => engineRef.current?.setFire(true)} onPointerUp={() => engineRef.current?.setFire(false)} onPointerCancel={() => engineRef.current?.setFire(false)}>FIRE</button><button onPointerDown={() => touch("interact", true)} onPointerUp={() => touch("interact", false)}>USE</button><button onClick={() => engineRef.current?.setWeapon(2)}>SWAP</button></div>
+            <div className="mobile-actions"><button className="mobile-fire" onPointerDown={() => engineRef.current?.setFire(true)} onPointerUp={() => engineRef.current?.setFire(false)} onPointerCancel={() => engineRef.current?.setFire(false)}>FIRE</button><button onPointerDown={() => touch("jump", true)} onPointerUp={() => touch("jump", false)} onPointerCancel={() => touch("jump", false)}>JUMP</button><button onPointerDown={() => touch("interact", true)} onPointerUp={() => touch("interact", false)}>USE</button><button onClick={() => engineRef.current?.cycleWeapon()}>SWAP</button></div>
           </div>
         </section>
       )}
@@ -2216,7 +2299,7 @@ export function BreachlineGame() {
       {showScoreboard && screen === "game" && (
         <div className="modal-layer scoreboard-layer">
           <div className="scoreboard">
-            <header><div><small>{snapshot.gameMode === "ffa" ? "FREE FOR ALL · DUSTLINE" : "DEMOLITION · DUSTLINE"}</small><h2>{snapshot.gameMode === "ffa" ? `${snapshot.kills} / 30` : <>{snapshot.attackScore} <span>—</span> {snapshot.defendScore}</>}</h2></div><strong>{snapshot.gameMode === "ffa" ? formatClock(snapshot.roundTime) : `ROUND ${snapshot.round}`}</strong></header>
+            <header><div><small>{snapshot.gameMode === "ffa" ? "FREE FOR ALL · DUSTLINE" : snapshot.gameMode === "training" ? "TRAINING RANGE · DUSTLINE" : "DEMOLITION · DUSTLINE"}</small><h2>{snapshot.gameMode === "ffa" ? `${snapshot.kills} / 30` : snapshot.gameMode === "training" ? `${snapshot.kills} ELIMS` : <>{snapshot.attackScore} <span>—</span> {snapshot.defendScore}</>}</h2></div><strong>{snapshot.gameMode === "ffa" ? formatClock(snapshot.roundTime) : snapshot.gameMode === "training" ? "SESSION" : `ROUND ${snapshot.round}`}</strong></header>
             {snapshot.gameMode === "ffa" ? (
               <section className="ffa-board"><h3>ARENA RANKING · FIRST TO 30</h3>{ffaScoreboard.map((player, index) => <div key={`ffa-${player.name}`} className={`${player.isPlayer ? "is-player" : ""} ${!player.alive ? "is-dead" : ""}`}><span>{index + 1}</span><strong>{player.name}</strong><span>{player.kills} K</span><span>{player.deaths} D</span><span>{player.alive ? "ACTIVE" : "RESPAWNING"}</span></div>)}</section>
             ) : (["attack", "defend"] as Team[]).map((team) => <section key={team}><h3>{team === "attack" ? "STRIKERS" : "WARDENS"}</h3>{scoreboardGroups[team].map((player) => <div key={`${team}-${player.name}`} className={`${player.isPlayer ? "is-player" : ""} ${!player.alive ? "is-dead" : ""}`}><span className="status-dot" /><strong>{player.name}</strong><span>{player.kills} K</span><span>{player.deaths} D</span><span>{player.alive ? "ACTIVE" : "DOWN"}</span></div>)}</section>)}
@@ -2226,12 +2309,12 @@ export function BreachlineGame() {
 
       {paused && screen === "game" && snapshot.phase !== "matchEnd" && (
         <div className="modal-layer pause-layer" role="dialog" aria-modal="true" aria-label="Pause menu">
-          <div className="pause-menu"><small>OPERATION PAUSED</small><h2>BREACHLINE</h2><button className="primary" onClick={() => { setPaused(false); engineRef.current?.resume(); }}>RESUME OPERATION</button><button onClick={() => setShowSettings(true)}>SETTINGS</button><button onClick={toggleFullscreen}>TOGGLE FULLSCREEN</button><button onClick={() => { setScreen("menu"); setPaused(false); }}>LEAVE MATCH</button><p>WASD move · Mouse aim · LMB fire · R reload<br />Hold Space bunny hop · 1/2/3 weapons · F inspect knife · Tab scores</p></div>
+          <div className="pause-menu"><small>OPERATION PAUSED</small><h2>BREACHLINE</h2><button className="primary" onClick={() => { setPaused(false); engineRef.current?.resume(); }}>RESUME OPERATION</button><button onClick={() => setShowSettings(true)}>SETTINGS</button><button onClick={toggleFullscreen}>TOGGLE FULLSCREEN</button><button onClick={leaveGame}>LEAVE MATCH</button><p>WASD move · Mouse aim · LMB fire · R reload<br />Hold Space bunny hop · 1/2/3 weapons · F inspect knife · Tab scores</p></div>
         </div>
       )}
 
       {snapshot.phase === "matchEnd" && screen === "game" && (
-        <div className="modal-layer result-layer"><div className="result-card"><small>OPERATION COMPLETE</small><h2>{snapshot.roundMessage}</h2><div><span><b>{snapshot.kills}</b> ELIMINATIONS</span><span><b>{snapshot.deaths}</b> DEATHS</span><span><b>{snapshot.attackScore}—{snapshot.defendScore}</b> FINAL</span></div><button onClick={() => startGame(snapshot.gameMode)}>PLAY AGAIN</button><button onClick={() => setScreen("menu")}>MAIN MENU</button></div></div>
+        <div className="modal-layer result-layer"><div className="result-card"><small>OPERATION COMPLETE</small><h2>{snapshot.roundMessage}</h2><div><span><b>{snapshot.kills}</b> ELIMINATIONS</span><span><b>{snapshot.deaths}</b> DEATHS</span><span><b>{snapshot.attackScore}—{snapshot.defendScore}</b> FINAL</span></div><button onClick={() => startGame(snapshot.gameMode)}>PLAY AGAIN</button><button onClick={leaveGame}>MAIN MENU</button></div></div>
       )}
 
       {showSettings && (
